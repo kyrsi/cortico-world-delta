@@ -1,0 +1,13 @@
+{
+  "tools": [],
+  "events": [
+    {
+      "type": "delta.observation",
+      "trigger": "debounce",
+      "description": {
+        "zh": "校准区域的观察结果及同帧完整截图与裁图",
+        "en": "Observations from calibrated regions with full and cropped images from one frame"
+      }
+    }
+  ]
+}

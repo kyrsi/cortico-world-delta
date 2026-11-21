@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="260" viewBox="0 0 1040 260" role="img" aria-labelledby="title desc">
+  <title id="title">Game observer</title>
+  <desc id="desc">A mint-green fish spots a coral-red loot tile and sends a speech bubble.</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#41675f" stroke-width="1"/>
+    </pattern>
+    <clipPath id="canvas"><rect width="1040" height="260" rx="24"/></clipPath>
+  </defs>
+  <g clip-path="url(#canvas)">
+    <rect width="1040" height="260" fill="#102e2b"/>
+    <rect x="622" width="418" height="260" fill="url(#grid)" opacity=".48"/>
+    <path d="M630 -20 544 280" stroke="#32544e" stroke-width="1"/>
+    <path d="M646 -20 560 280" stroke="#32544e" stroke-width="1" opacity=".6"/>
+    <g font-family="Arial, Helvetica, sans-serif">
+      <circle cx="60" cy="65" r="6" fill="#d3ed79"/>
+      <text x="80" y="71" fill="#b6d6ca" font-size="16" font-weight="700" letter-spacing="3">CORTICO WORLD</text>
+      <text x="48" y="155" fill="#f2f5e9" font-size="69" font-weight="700" letter-spacing="-3.5">Game observer</text>
+      <text x="54" y="207" fill="#c6dacf" font-size="20" letter-spacing="1">Delta Force  /  Operations</text>
+    </g>
+    <g stroke="#91b0a3" stroke-width="2" fill="none">
+      <path d="M670 89V64h25 M920 64h25v25 M695 208h-25v-25 M945 183v25h-25"/>
+    </g>
+    <g transform="translate(642 97) rotate(-7 112 48)">
+      <path d="M68 35 45 17q-6-4-6 4l3 27-5 21q-2 9 6 5l27-13" fill="#a5c981" stroke="#102e2b" stroke-width="4" stroke-linejoin="round"/>
+      <path d="M75 27Q92 3 126 6q-5 9-1 17" fill="#a5c981" stroke="#102e2b" stroke-width="4" stroke-linejoin="round"/>
+      <path d="M63 45q2-32 49-36 46-3 64 28 6 10 4 20-6 28-52 31-46 3-60-22-6-10-5-21Z" fill="#d3ed79" stroke="#102e2b" stroke-width="4.5"/>
+      <path d="M121 50q-15-3-18 5 8 10 19 7" fill="#abc96d" stroke="#355847" stroke-width="2.6" stroke-linecap="round"/>
+      <circle cx="153" cy="36" r="6.5" fill="#173932"/>
+      <circle cx="155" cy="34" r="1.6" fill="#fcffea"/>
+      <path d="M159 53q7 6 14 0" fill="none" stroke="#284b3c" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <path d="M838 152h28" stroke="#d3ed79" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 7"/>
+    <g transform="translate(877 132)">
+      <rect width="40" height="40" rx="7" fill="#653f38" stroke="#ffb39f" stroke-width="2"/>
+      <path d="m20 8 11 12-11 12L9 20Z" fill="#ff9784"/>
+      <path d="m20 8 3 12-3 12" fill="none" stroke="#c76657" stroke-width="1.5"/>
+    </g>
+    <g transform="translate(807 38)">
+      <path d="M15 0h53q14 0 14 14v16q0 14-14 14H34L18 55l1-11h-4Q0 44 0 29V15Q0 0 15 0Z" fill="#edf5dd" stroke="#102e2b" stroke-width="4" stroke-linejoin="round"/>
+      <g fill="#2f5547"><circle cx="26" cy="22" r="3"/><circle cx="41" cy="22" r="3"/><circle cx="56" cy="22" r="3"/></g>
+    </g>
+  </g>
+</svg>
