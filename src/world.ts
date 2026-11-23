@@ -3,33 +3,29 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { Language } from 'cortico/core/language.ts';
-import type { BlobInput, EventEnvelope, OutputTap, RunPhase, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
+import type { EventEnvelope, OutputTap, RunPhase, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
 import type { DeepPartial } from 'cortico/world.ts';
 import type { CuaDisplay, CuaFrame } from 'cortico-world-desktop-pet';
 import { CALIBRATION_PREVIEW_MS, calibrationRegions, sameCalibrationSource } from './calibration.ts';
 import { captureRectangle } from './roi.ts';
 import { DELTA_DEFAULTS, deltaConfigGroups, type DeltaConfigSection } from './config.ts';
-import { DELTA_CONTROL_INTERVAL_MS, DELTA_MAX_HISTORY, DELTA_MAX_JPEG_BYTES } from './limits.ts';
+import { DELTA_CONTROL_INTERVAL_MS, DELTA_MAX_JPEG_BYTES } from './limits.ts';
 import { detectionStatus, matchesCalibration } from './detector.ts';
 import { jpegSize } from './jpeg-size.ts';
 import { deltaText } from './i18n/index.ts';
-import { observationText } from './model-text.ts';
+import { EventQueue } from './event-queue.ts';
 import { KnowledgeStore } from './knowledge-store.ts';
 import { IdentityDebugStore } from './identity-debug.ts';
-import { selectKnowledge } from './knowledge.ts';
-import { evaluateSpeech } from './speech.ts';
 import { invokePanel, type DeltaPanelHost } from './panel-rpc.ts';
 import { DeltaWorker, runCalibrationOperation } from './proxy.ts';
 import { openScreenshotInFolder, revealCapture, type ScreenshotReveal } from './screenshot-reveal.ts';
 import { startupCheck } from './startup-check.ts';
 import { windowsCalibrationHotkey } from './standalone-hotkey.ts';
-import { PersonalNotificationTracker, validPersonalSignature } from './personal-notification.ts';
-import { LootItemTracker, lootCalibrationFitsBudget, lootNamespace, lootStatus, validLootSignature } from './loot-detector.ts';
+import { lootCalibrationFitsBudget, lootNamespace, lootStatus, validLootSignature } from './loot-detector.ts';
 import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaCapture, IdentityProgressSink } from './engine-ipc.ts';
 import { DEFAULT_GAME_ASPECT_RATIO, isGameAspectRatio, type DeltaCalibrationRegions, type DeltaGameAspectRatio } from './protocol.ts';
-import type { DeltaBindingSnapshot, DeltaCalibrationApplyRequest, DeltaCalibrationHotkeyState, DeltaCalibrationSuggestion, DeltaDetectionState, DeltaDropReason, DeltaEvent, DeltaIntent, DeltaLootConfig, DeltaLootState, DeltaProductBinding, DeltaReason, DeltaSimulateRequest, DeltaSimulationReceipt, DeltaSpeechConfig, DeltaState } from './protocol.ts';
+import type { DeltaBindingSnapshot, DeltaCalibrationApplyRequest, DeltaCalibrationHotkeyState, DeltaCalibrationSuggestion, DeltaDetectionState, DeltaDropReason, DeltaIntent, DeltaLootConfig, DeltaLootState, DeltaProductBinding, DeltaReason, DeltaSimulateRequest, DeltaSimulationReceipt, DeltaSpeechConfig, DeltaState } from './protocol.ts';
 
-interface Evidence { full: Uint8Array; crop: Uint8Array }
 interface Simulation { id: string; resolve(receipt: DeltaSimulationReceipt): void; timer: NodeJS.Timeout }
 interface CalibrationPreview {
   capture: DeltaCapture;
@@ -92,16 +88,9 @@ export class DeltaWorld implements World {
   private retryAt = 0;
   private exhausted = false;
   private runIdle = true;
-  private events: DeltaEvent[] = [];
-  private pending: DeltaEvent[] = [];
-  private inflight = new Set<string>();
-  private images = new Map<string, Evidence>();
-  private seen = new Map<string, number>();
-  private personalNotifications = new PersonalNotificationTracker();
-  private lootItems = new LootItemTracker();
+  private readonly queue: EventQueue;
   private simulations = new Map<number, Simulation>();
   private requestSequence = 0;
-  private wake: { generation: number; token: string } | null = null;
   private stopping = new Set<Promise<void>>();
   private detectorState: Omit<DeltaDetectionState, 'config'> | null = null;
   private lootState: Omit<DeltaLootState, 'config'> | null = null;
@@ -116,15 +105,33 @@ export class DeltaWorld implements World {
   private readonly identityDebug: IdentityDebugStore;
   private identitySaveRevision = 0;
   private readonly screenshotReveal: ScreenshotReveal | null;
-  private lastSelectedAtMs: number | null = null;
-  private lastActivityAtMs: number | null = null;
-
   constructor(private readonly options: DeltaWorldOptions) {
     this.binding = options.binding; this.knowledge = new KnowledgeStore(options.dataDir);
     this.identityDebug = new IdentityDebugStore(options.dataDir);
     this.standalone = options.standalone ?? (process.platform === 'win32' ? windowsCapture : undefined);
     const directory = options.screenshotReveal?.directory ?? (options.dataDir ? join(options.dataDir, 'worlds', this.id, 'screenshots') : null);
     this.screenshotReveal = directory ? { directory, open: options.screenshotReveal?.open ?? openScreenshotInFolder } : null;
+    this.queue = new EventQueue({
+      frame: () => this.frame,
+      generation: () => this.generation,
+      phase: () => this.phase,
+      detection: () => this.options.cfg.detection,
+      lootCalibration: () => this.lootConfig().calibration,
+      ttlMs: () => this.options.cfg.events.ttlMs,
+      dedupMs: () => this.options.cfg.events.dedupMs,
+      maxPending: () => this.options.cfg.events.maxPending,
+      speech: () => this.speechConfig(),
+      random: () => this.options.random ?? Math.random,
+      hasHost: () => this.host !== null,
+      idle: () => this.runIdle,
+      blocked: () => this.blocked(this.snapshot()) !== null,
+      modelLanguage: () => this.options.modelLanguage?.() ?? this.binding?.modelLanguage?.() ?? 'zh',
+      knowledge: () => this.knowledge.current(),
+      knowledgeSource: () => this.knowledge.state().source,
+      reconcile: () => this.reconcile(),
+      expire: () => this.expire(),
+      pushDeferred: (meta, render) => { this.host!.pushDeferred({ type: 'delta.observation', senderKey: 'delta.observation', meta, render }, { trigger: 'debounce' }); },
+    });
   }
   private lootConfig(): DeltaLootConfig { return { ...DELTA_DEFAULTS.loot, ...this.options.cfg.loot }; }
   private speechConfig(): DeltaSpeechConfig {
@@ -141,12 +148,12 @@ export class DeltaWorld implements World {
     return { externalizes: () => false, onEvent: (event) => {
       if (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta'
         || (event.type === 'response.output_item.added' && event.item?.type === 'function_call')
-        || event.type === 'response.function_call_arguments.delta') this.lastActivityAtMs = Date.now();
+        || event.type === 'response.function_call_arguments.delta') this.queue.noteActivity(Date.now());
     } };
   }
   async start(host: WorldHost): Promise<void> {
     this.host = host;
-    this.lastSelectedAtMs = null; this.lastActivityAtMs = null;
+    this.queue.resetClock();
     this.bindProduct(this.binding);
     this.timer = setInterval(() => this.reconcile(), DELTA_CONTROL_INTERVAL_MS);
     this.timer.unref();
@@ -162,7 +169,7 @@ export class DeltaWorld implements World {
     this.clearCalibration();
     this.intent = 'stopped';
     this.invalidate('policy-changed');
-    this.wake = null;
+    this.queue.clearWake();
     this.phase = 'stopped'; this.reason = 'stopped';
     await Promise.all(this.stopping);
   }
@@ -236,13 +243,13 @@ export class DeltaWorld implements World {
       this.phase = 'stopped'; this.reason = this.intent === 'paused' ? 'paused' : 'stopped'; return;
     }
     if (reason) {
-      if (this.worker || this.images.size || this.pending.length) this.invalidate('policy-changed');
+      if (this.worker || this.queue.imageCount() || this.queue.pendingCount()) this.invalidate('policy-changed');
       this.phase = 'blocked'; this.reason = reason; return;
     }
     if (this.exhausted) { this.phase = 'error'; return; }
     if (!this.worker && this.stopping.size === 0 && Date.now() >= this.retryAt) this.spawn(snapshot);
     this.expire();
-    this.scheduleWake();
+    this.queue.scheduleWake();
   }
   private spawn(snapshot: CapturePolicy): void {
     const generation = ++this.generation;
@@ -276,9 +283,8 @@ export class DeltaWorld implements World {
     if (reason === 'source-changed') this.clearCalibration();
     for (const request of this.previewRequests.values()) { clearTimeout(request.timer); request.resolve(null); }
     this.previewRequests.clear();
-    for (const event of this.events) if (event.status === 'queued') this.drop(event, reason);
-    this.pending = []; this.images.clear(); this.inflight.clear(); this.frame = null;
-    if (!preserveDedup) { this.seen.clear(); this.personalNotifications.clear(); this.lootItems.clear(); }
+    this.queue.clear(reason, preserveDedup);
+    this.frame = null;
     for (const [id, request] of this.simulations) {
       clearTimeout(request.timer); this.simulations.delete(id);
       request.resolve({ accepted: false, reason, eventId: null, state: this.stateSnapshot() });
@@ -323,7 +329,7 @@ export class DeltaWorld implements World {
       this.lootState = message.loot ?? null;
       const calibration = this.lootConfig().calibration;
       if (message.frame && calibration && message.lootVisible && message.lootVisible.length <= 4 && message.lootVisible.every(validLootSignature)) {
-        this.lootItems.observe(lootNamespace(message.frame, calibration), message.lootVisible, Date.now());
+        this.queue.observeLoot(lootNamespace(message.frame, calibration), message.lootVisible, Date.now());
       }
       return;
     }
@@ -337,7 +343,7 @@ export class DeltaWorld implements World {
           || !validLootSignature(message.lootSignature) || message.attribution) return;
         const crop = captureRectangle(calibration.itemsRoi, message.capture.frame.width, message.capture.frame.height);
         if (crop.x !== message.crop.x || crop.y !== message.crop.y || crop.width !== message.crop.width || crop.height !== message.crop.height) return;
-        try { this.accept(message); } catch { this.failed('worker-failed'); }
+        try { this.queue.accept(message); } catch { this.failed('worker-failed'); }
         return;
       }
       if (!this.frame || this.phase !== 'running' || !this.options.cfg.detection.enabled || !this.options.cfg.detection.calibration
@@ -347,133 +353,28 @@ export class DeltaWorld implements World {
       if (calibration.personalFeedbackRoi && this.options.cfg.detection.language !== 'zh-CN') return;
       const crop = captureRectangle(calibration.personalFeedbackRoi ?? calibration.roi, message.capture.frame.width, message.capture.frame.height);
       if (crop.x !== message.crop.x || crop.y !== message.crop.y || crop.width !== message.crop.width || crop.height !== message.crop.height) return;
-      try { this.accept(message); } catch { this.failed('worker-failed'); }
+      try { this.queue.accept(message); } catch { this.failed('worker-failed'); }
       return;
     }
     const request = this.simulations.get(message.requestId);
     if (!request || request.id !== message.id) return;
     this.simulations.delete(message.requestId); clearTimeout(request.timer);
     let receipt: Omit<DeltaSimulationReceipt, 'state'>;
-    try { receipt = this.accept(message); }
+    try { receipt = this.queue.accept(message); }
     catch { receipt = { accepted: false, reason: 'worker-failed', eventId: null }; this.failed('worker-failed'); }
     request.resolve({ ...receipt, state: this.stateSnapshot() });
-  }
-  private accept(message: Extract<ChildToMain, { kind: 'event' }>): Omit<DeltaSimulationReceipt, 'state'> {
-    const { frame, jpeg: full } = message.capture, crop = message.crop;
-    const time = Date.parse(frame.capturedAt), now = Date.now();
-    if (!this.frame || frame.display.id !== this.frame.display.id || frame.topologyRevision !== this.frame.topologyRevision
-      || !Number.isFinite(time) || time > now + 1000 || !['kill', 'knockdown', 'loot'].includes(message.eventKind)
-      || full.byteLength > DELTA_MAX_JPEG_BYTES || message.cropJpeg.byteLength > DELTA_MAX_JPEG_BYTES
-      || ![crop.x, crop.y, crop.width, crop.height].every(Number.isInteger)
-      || crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 || crop.x + crop.width > frame.width || crop.y + crop.height > frame.height) throw new Error('Invalid observation frame');
-    const fullSize = jpegSize(full), cropSize = jpegSize(message.cropJpeg);
-    if (!fullSize || !cropSize || fullSize.width !== frame.width || fullSize.height !== frame.height
-      || cropSize.width !== crop.width || cropSize.height !== crop.height) throw new Error('Invalid image dimensions');
-    const personal = !message.synthetic && message.recognition?.kind === 'personal-feedback-text' && message.eventKind !== 'loot';
-    if (personal && !validPersonalSignature(message.personalSignature)) throw new Error('Invalid personal notification signature');
-    const attribution = message.synthetic ? null : message.attribution ?? null;
-    if (attribution && (!['self', 'teammate', 'unknown'].includes(attribution.relation)
-      || !['actor-text', 'personal-feedback', 'assist-text', 'spectator-hud', 'unknown'].includes(attribution.basis)
-      || typeof attribution.assisted !== 'boolean' || typeof attribution.spectating !== 'boolean')) throw new Error('Invalid observation attribution');
-    const relation = attribution?.relation ?? 'unknown';
-    const namespace = personal ? JSON.stringify([frame.display, frame.topologyRevision, this.options.cfg.detection, relation]) : '';
-    const loot = !message.synthetic && message.eventKind === 'loot', itemNamespace = loot ? lootNamespace(frame, this.lootConfig().calibration!) : '';
-    const duplicateItem = loot && this.lootItems.has(itemNamespace, message.lootSignature!, now);
-    const dedupKey = loot ? this.lootItems.identify(itemNamespace, message.lootSignature!, now)
-      : personal ? this.personalNotifications.identify(namespace, message.eventKind as 'kill' | 'knockdown', message.personalSignature ?? null, now) : message.dedupKey;
-    const event: DeltaEvent = { id: message.id, kind: message.eventKind, capturedAt: frame.capturedAt,
-      validUntil: new Date(time + this.options.cfg.events.ttlMs).toISOString(), generation: this.generation,
-      synthetic: message.synthetic, confidence: null, recognition: message.recognition, attribution, dedupKey, frame, crop, status: 'queued', dropReason: null };
-    this.events.push(event);
-    const seenKey = event.kind === 'loot' ? `${event.kind}:${event.dedupKey}` : `${event.kind}:${relation}:${event.dedupKey}`;
-    if (Date.parse(event.validUntil) <= now) this.drop(event, 'expired');
-    else if (duplicateItem || (this.seen.get(seenKey) ?? 0) > now) this.drop(event, 'duplicate');
-    else {
-      if (personal) this.personalNotifications.remember(namespace, message.eventKind as 'kill' | 'knockdown', message.personalSignature ?? null, dedupKey, now);
-      if (loot) this.lootItems.remember(itemNamespace, message.lootSignature!, dedupKey, now);
-      this.seen.set(seenKey, now + this.options.cfg.events.dedupMs);
-      for (const [key, expires] of this.seen) if (expires <= now || this.seen.size > 256) this.seen.delete(key);
-      const suppression = evaluateSpeech(this.speechConfig(), event, { nowMs: now, lastSelectedAtMs: this.lastSelectedAtMs,
-        lastActivityAtMs: this.lastActivityAtMs, random: this.options.random ?? Math.random });
-      if (suppression) this.drop(event, suppression);
-      else {
-        while (this.pending.length >= this.options.cfg.events.maxPending) this.drop(this.pending.shift()!, 'overflow');
-        this.images.set(event.id, { full: new Uint8Array(full), crop: new Uint8Array(message.cropJpeg) });
-        this.pending.push(event); this.scheduleWake();
-      }
-    }
-    this.trimHistory();
-    return { accepted: event.status !== 'dropped', reason: event.dropReason, eventId: event.id };
-  }
-  private drop(event: DeltaEvent, reason: DeltaDropReason): void { event.status = 'dropped'; event.dropReason = reason; this.images.delete(event.id); }
-  private trimHistory(): void {
-    const limit = Math.max(DELTA_MAX_HISTORY, this.options.cfg.events.maxPending);
-    while (this.events.length > limit) {
-      let index = this.events.findIndex((event) => event.status !== 'queued');
-      if (index < 0) index = this.events.findIndex((event) => !this.inflight.has(event.id));
-      if (index < 0) break;
-      const removed = this.events.splice(index, 1)[0]!;
-      if (removed.status === 'queued') this.drop(removed, 'overflow');
-      this.pending = this.pending.filter((event) => event !== removed);
-      this.images.delete(removed.id);
-    }
   }
   private expire(): void {
     const now = Date.now();
     if (this.preview && this.preview.expiresAtMs <= now) this.preview = null;
-    for (const event of this.events) if (Date.parse(event.validUntil) <= now) {
-      if (event.status === 'queued') this.drop(event, 'expired');
-      this.images.delete(event.id);
-    }
-    this.pending = this.pending.filter((event) => event.status === 'queued');
-  }
-  private scheduleWake(): void {
-    if (!this.host || this.wake || !this.runIdle || !this.pending.length || this.phase !== 'running' || this.blocked(this.snapshot())) return;
-    const wake = { generation: this.generation, token: randomUUID() }; this.wake = wake;
-    const meta: Record<string, unknown> = { deltaEventIds: [] };
-    this.host.pushDeferred({ type: 'delta.observation', senderKey: 'delta.observation', meta, render: () => {
-      if (this.wake !== wake) return null;
-      this.reconcile(); this.expire();
-      this.wake = null;
-      if (wake.generation !== this.generation || this.phase !== 'running' || this.blocked(this.snapshot())) {
-        queueMicrotask(() => this.scheduleWake()); return null;
-      }
-      const nowMs = Date.now(), config = this.speechConfig();
-      const batch = this.pending.splice(0).filter(event => {
-        const suppression = evaluateSpeech({ ...config, probability: config.probability === 0 ? 0 : 1 }, event, { nowMs,
-          lastSelectedAtMs: this.lastSelectedAtMs, lastActivityAtMs: this.lastActivityAtMs, random: () => 0 });
-        if (suppression) this.drop(event, suppression);
-        return suppression === null;
-      });
-      if (!batch.length) return null;
-      if (batch.some(event => !event.synthetic)) this.lastSelectedAtMs = nowMs;
-      meta.deltaEventIds = batch.map((event) => event.id);
-      for (const event of batch) this.inflight.add(event.id);
-      const blobs: BlobInput[] = [];
-      for (const event of batch) {
-        const images = this.images.get(event.id)!;
-        for (const [index, bytes] of [images.full, images.crop].entries()) blobs.push({ bytes, mime: 'image/jpeg', fallbackText: `${event.id} ${index === 0 ? 'full' : 'crop'} frameId=${event.frame.frameId}` });
-      }
-      const knowledge = this.knowledge.current();
-      return { text: observationText(batch, this.options.modelLanguage?.() ?? this.binding?.modelLanguage?.() ?? 'zh', {
-        knowledge: selectKnowledge(knowledge, batch), source: this.knowledge.state().source, name: knowledge.name,
-        version: knowledge.version, style: config.style,
-      }), blobs };
-    } }, { trigger: 'debounce' });
+    this.queue.expire(now);
   }
   onRunPhase(phase: RunPhase): void {
     this.runIdle = phase.state === 'idle';
-    if (this.runIdle) queueMicrotask(() => this.scheduleWake());
+    if (this.runIdle) queueMicrotask(() => this.queue.scheduleWake());
   }
   onEventsSettled(events: readonly EventEnvelope[], outcome: 'delivered' | 'discarded'): void {
-    for (const envelope of events) {
-      const ids = envelope.meta?.deltaEventIds;
-      if (!Array.isArray(ids)) continue;
-      for (const event of this.events) if (ids.includes(event.id) && event.status === 'queued') {
-        this.inflight.delete(event.id);
-        if (outcome === 'delivered') event.status = 'delivered'; else this.drop(event, 'policy-changed');
-      }
-    }
+    this.queue.settled(events, outcome);
   }
   private stateSnapshot(): DeltaState {
     const snapshot = this.snapshot(), blocked = this.blocked(snapshot);
@@ -494,9 +395,9 @@ export class DeltaWorld implements World {
       calibrationHotkey: this.calibrationHotkeyState(snapshot), gameAspectRatio: this.gameAspectRatio(),
       identityDebug: this.identityDebug.state(),
       worker: { pid: this.worker?.pid ?? null, heartbeatAt: this.worker?.heartbeatAt ?? null, restarts: this.restarts, captures: this.captures },
-      pending: this.pending.length, events: this.events, detection, loot, startupCheck: startupCheck(this.frame, this.options.cfg.detection, config),
-      speech: { config: this.speechConfig(), lastSelectedAt: this.lastSelectedAtMs === null ? null : new Date(this.lastSelectedAtMs).toISOString(),
-        lastActivityAt: this.lastActivityAtMs === null ? null : new Date(this.lastActivityAtMs).toISOString() }, knowledge: this.knowledge.state(),
+      pending: this.queue.pendingCount(), events: this.queue.list(), detection, loot, startupCheck: startupCheck(this.frame, this.options.cfg.detection, config),
+      speech: { config: this.speechConfig(), lastSelectedAt: this.queue.selectedAtMs() === null ? null : new Date(this.queue.selectedAtMs()!).toISOString(),
+        lastActivityAt: this.queue.activityAtMs() === null ? null : new Date(this.queue.activityAtMs()!).toISOString() }, knowledge: this.knowledge.state(),
       actions: { start: !!this.binding && !!this.host && !!this.options.cfg.enabled && !blocked && (this.intent !== 'running' || this.exhausted),
         pause: this.intent === 'running', stop: this.intent !== 'stopped' || this.pendingGrant !== null || this.calibrationGrant !== null,
         simulate: this.phase === 'running' && this.worker !== null && this.frame !== null && !blocked } });
@@ -773,9 +674,9 @@ export class DeltaWorld implements World {
   private readablePreview(frameId: unknown): DeltaCapture | null {
     return this.validPreview(frameId) ?? this.validCalibrationPreview(frameId)?.capture ?? null;
   }
-  private readableEventCapture(eventId: string, part: keyof Evidence): DeltaCapture | null {
+  private readableEventCapture(eventId: string, part: 'full' | 'crop'): DeltaCapture | null {
     this.reconcile(); this.expire();
-    const event = this.events.find((value) => value.id === eventId), images = this.images.get(eventId);
+    const event = this.queue.list().find((value) => value.id === eventId), images = this.queue.stored(eventId);
     if (this.phase !== 'running' || this.blocked(this.snapshot()) || !event || event.generation !== this.generation || event.status === 'dropped' || !images) return null;
     return { frame: event.frame, jpeg: images[part] };
   }
