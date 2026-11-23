@@ -2,7 +2,6 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import jpeg from 'jpeg-js';
 import type { Language } from 'cortico/core/language.ts';
 import type { BlobInput, EventEnvelope, OutputTap, RunPhase, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
 import type { DeepPartial } from 'cortico/world.ts';
@@ -12,6 +11,7 @@ import { captureRectangle } from './roi.ts';
 import { DELTA_DEFAULTS, deltaConfigGroups, type DeltaConfigSection } from './config.ts';
 import { DELTA_CONTROL_INTERVAL_MS, DELTA_MAX_HISTORY, DELTA_MAX_JPEG_BYTES } from './limits.ts';
 import { detectionStatus, matchesCalibration } from './detector.ts';
+import { jpegSize } from './jpeg-size.ts';
 import { deltaText } from './i18n/index.ts';
 import { observationText } from './model-text.ts';
 import { KnowledgeStore } from './knowledge-store.ts';
@@ -366,9 +366,9 @@ export class DeltaWorld implements World {
       || full.byteLength > DELTA_MAX_JPEG_BYTES || message.cropJpeg.byteLength > DELTA_MAX_JPEG_BYTES
       || ![crop.x, crop.y, crop.width, crop.height].every(Number.isInteger)
       || crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 || crop.x + crop.width > frame.width || crop.y + crop.height > frame.height) throw new Error('Invalid observation frame');
-    const decoded = jpeg.decode(full, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-    const decodedCrop = jpeg.decode(message.cropJpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-    if (decoded.width !== frame.width || decoded.height !== frame.height || decodedCrop.width !== crop.width || decodedCrop.height !== crop.height) throw new Error('Invalid image dimensions');
+    const fullSize = jpegSize(full), cropSize = jpegSize(message.cropJpeg);
+    if (!fullSize || !cropSize || fullSize.width !== frame.width || fullSize.height !== frame.height
+      || cropSize.width !== crop.width || cropSize.height !== crop.height) throw new Error('Invalid image dimensions');
     const personal = !message.synthetic && message.recognition?.kind === 'personal-feedback-text' && message.eventKind !== 'loot';
     if (personal && !validPersonalSignature(message.personalSignature)) throw new Error('Invalid personal notification signature');
     const attribution = message.synthetic ? null : message.attribution ?? null;
@@ -587,8 +587,8 @@ export class DeltaWorld implements World {
   }
   private storeManualPreview(capture: DeltaCapture, unavailable: string, calibrationRevision?: string): CuaFrame {
     if (!capture.jpeg.byteLength || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) throw new Error(unavailable);
-    const decoded = jpeg.decode(capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-    if (decoded.width !== capture.frame.width || decoded.height !== capture.frame.height) throw new Error(unavailable);
+    const size = jpegSize(capture.jpeg);
+    if (!size || size.width !== capture.frame.width || size.height !== capture.frame.height) throw new Error(unavailable);
     this.preview = { capture, generation: this.generation, aspectRatio: this.gameAspectRatio(), calibrationRevision, expiresAtMs: Date.now() + 30_000 };
     return structuredClone(capture.frame);
   }
@@ -742,10 +742,8 @@ export class DeltaWorld implements World {
     const { frame } = capture;
     if ((snapshot.displayId ? frame.display.id !== snapshot.displayId : !frame.display.primary)
       || (this.frame && !sameCalibrationSource(this.frame, frame)) || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) return { status: 'capture-unavailable' };
-    try {
-      const decoded = jpeg.decode(capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-      if (decoded.width !== frame.width || decoded.height !== frame.height) return { status: 'capture-unavailable' };
-    } catch { return { status: 'capture-unavailable' }; }
+    const size = jpegSize(capture.jpeg);
+    if (!size || size.width !== frame.width || size.height !== frame.height) return { status: 'capture-unavailable' };
     const expiresAtMs = Date.now() + CALIBRATION_PREVIEW_MS;
     const preview = { capture, revision: snapshot.revision, expiresAtMs, attemptId };
     const expiresAt = new Date(expiresAtMs).toISOString();
