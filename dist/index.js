@@ -3003,6 +3003,12 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 import { join as join6 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+// src/rect.ts
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+
 // src/roi.ts
 function captureRoi(value) {
   if (!value || typeof value !== "object") return null;
@@ -3010,8 +3016,7 @@ function captureRoi(value) {
   if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
   return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
 }
-function captureRectangle(roi, width, height) {
-  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+function outwardRectangle(roi, width, height) {
   const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
   return {
     x,
@@ -3020,17 +3025,60 @@ function captureRectangle(roi, width, height) {
     height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
   };
 }
+function captureRectangle(roi, width, height) {
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+  return outwardRectangle(roi, width, height);
+}
+
+// src/budget.ts
+function acceptedRoi(roi) {
+  return captureRoi(roi) !== null;
+}
+function combatSelectionTooLarge(regions, width, height) {
+  const area = regions.reduce((total, roi) => total + roi.width * roi.height, 0);
+  const pixels = regions.reduce((total, roi) => {
+    const box = outwardRectangle(roi, width, height);
+    return total + box.width * box.height;
+  }, 0);
+  return area > DELTA_MAX_ROI_AREA || pixels > DELTA_MAX_ROI_PIXELS;
+}
+function calibrationFitsBudget(calibration) {
+  try {
+    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
+    const { width, height } = calibration.display.bounds;
+    for (const roi of regions) captureRectangle(roi, width, height);
+    return !combatSelectionTooLarge(regions, width, height);
+  } catch {
+    return false;
+  }
+}
+function lootSelectionTooLarge(items, context, width, height, valid) {
+  const pixels = (roi) => {
+    if (!valid(roi)) return 0;
+    const box = outwardRectangle(roi, width, height);
+    return box.width * box.height;
+  };
+  const regions = [items, context].filter(valid);
+  const area = regions.reduce((sum, roi) => sum + roi.width * roi.height, 0);
+  const bounds = regions.length === 0 ? null : regions.length === 1 ? regions[0] : unionRect(regions[0], regions[1]);
+  return pixels(items) > DELTA_MAX_LOOT_ITEMS_PIXELS || pixels(context) > DELTA_MAX_LOOT_CONTEXT_PIXELS || area > DELTA_MAX_LOOT_ROI_AREA || pixels(bounds) > DELTA_MAX_ROI_PIXELS;
+}
+function lootCalibrationFitsBudget(calibration) {
+  try {
+    const { width, height } = calibration.display.bounds;
+    captureRectangle(calibration.itemsRoi, width, height);
+    captureRectangle(calibration.contextRoi, width, height);
+    captureRectangle(unionRect(calibration.itemsRoi, calibration.contextRoi), width, height);
+    return !lootSelectionTooLarge(calibration.itemsRoi, calibration.contextRoi, width, height, acceptedRoi);
+  } catch {
+    return false;
+  }
+}
 
 // src/powershell.ts
 import { join } from "node:path";
 function powershellExecutable() {
   return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-}
-
-// src/rect.ts
-function unionRect(a, b) {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
 }
 
 // src/ocr.ts
@@ -3192,15 +3240,6 @@ function compactLower(text11) {
 }
 
 // src/detector.ts
-function calibrationFitsBudget(calibration) {
-  try {
-    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
-    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
-  } catch {
-    return false;
-  }
-}
 function matchesCalibration(region, calibration) {
   return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
@@ -3222,19 +3261,6 @@ function detectionStatus(config) {
 // src/loot-detector.ts
 var import_jpeg_js2 = __toESM(require_jpeg_js(), 1);
 import { createHash as createHash2 } from "node:crypto";
-function lootCaptureRoi(calibration) {
-  return unionRect(calibration.itemsRoi, calibration.contextRoi);
-}
-function lootCalibrationFitsBudget(calibration) {
-  try {
-    const { width, height } = calibration.display.bounds;
-    const items = captureRectangle(calibration.itemsRoi, width, height), context = captureRectangle(calibration.contextRoi, width, height);
-    const whole = captureRectangle(lootCaptureRoi(calibration), width, height);
-    return items.width * items.height <= DELTA_MAX_LOOT_ITEMS_PIXELS && context.width * context.height <= DELTA_MAX_LOOT_CONTEXT_PIXELS && calibration.itemsRoi.width * calibration.itemsRoi.height + calibration.contextRoi.width * calibration.contextRoi.height <= DELTA_MAX_LOOT_ROI_AREA && whole.width * whole.height <= DELTA_MAX_ROI_PIXELS;
-  } catch {
-    return false;
-  }
-}
 function lootStatus(config, combat) {
   const reason = !config.language ? "language-required" : !config.calibration ? "calibration-required" : !lootCalibrationFitsBudget(config.calibration) ? "roi-too-large" : combat?.enabled && combat.language && combat.language !== config.language ? "language-conflict" : null;
   return {

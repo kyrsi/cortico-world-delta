@@ -2192,44 +2192,6 @@ function sameDeltaDisplay(a, b) {
 }
 var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 
-// src/roi.ts
-function captureRoi(value) {
-  if (!value || typeof value !== "object") return null;
-  const roi = value;
-  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
-  return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
-}
-function captureRectangle(roi, width, height) {
-  if (!captureRoi(roi)) throw new Error("Invalid capture region");
-  const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
-  return {
-    x,
-    y,
-    width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
-    height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
-  };
-}
-
-// src/ocr.ts
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
-
-// src/powershell.ts
-import { join } from "node:path";
-function powershellExecutable() {
-  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-}
-
-// src/rect.ts
-function unionRect(a, b) {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-}
-function unionRects(boxes) {
-  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
-  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
-}
-
 // src/limits.ts
 var DELTA_MAX_JPEG_BYTES = 2 * 1024 * 1024;
 var DELTA_MAX_ROI_AREA = 0.25;
@@ -2244,6 +2206,92 @@ var DELTA_LOOT_RETAIN_MS = 6e4;
 var DELTA_OCR_TRANSIENT_FAILURE_LIMIT = 3;
 function deltaOcrBackoffMs(failures) {
   return Math.min(4e3, 1e3 * 2 ** Math.max(0, failures - 1));
+}
+
+// src/rect.ts
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+function unionRects(boxes) {
+  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
+  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
+}
+
+// src/roi.ts
+function captureRoi(value) {
+  if (!value || typeof value !== "object") return null;
+  const roi = value;
+  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
+  return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
+}
+function outwardRectangle(roi, width, height) {
+  const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
+    height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
+  };
+}
+function captureRectangle(roi, width, height) {
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+  return outwardRectangle(roi, width, height);
+}
+
+// src/budget.ts
+function acceptedRoi(roi) {
+  return captureRoi(roi) !== null;
+}
+function combatSelectionTooLarge(regions, width, height) {
+  const area = regions.reduce((total, roi) => total + roi.width * roi.height, 0);
+  const pixels = regions.reduce((total, roi) => {
+    const box = outwardRectangle(roi, width, height);
+    return total + box.width * box.height;
+  }, 0);
+  return area > DELTA_MAX_ROI_AREA || pixels > DELTA_MAX_ROI_PIXELS;
+}
+function calibrationFitsBudget(calibration) {
+  try {
+    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
+    const { width, height } = calibration.display.bounds;
+    for (const roi of regions) captureRectangle(roi, width, height);
+    return !combatSelectionTooLarge(regions, width, height);
+  } catch {
+    return false;
+  }
+}
+function lootSelectionTooLarge(items, context, width, height, valid) {
+  const pixels = (roi) => {
+    if (!valid(roi)) return 0;
+    const box = outwardRectangle(roi, width, height);
+    return box.width * box.height;
+  };
+  const regions = [items, context].filter(valid);
+  const area = regions.reduce((sum, roi) => sum + roi.width * roi.height, 0);
+  const bounds = regions.length === 0 ? null : regions.length === 1 ? regions[0] : unionRect(regions[0], regions[1]);
+  return pixels(items) > DELTA_MAX_LOOT_ITEMS_PIXELS || pixels(context) > DELTA_MAX_LOOT_CONTEXT_PIXELS || area > DELTA_MAX_LOOT_ROI_AREA || pixels(bounds) > DELTA_MAX_ROI_PIXELS;
+}
+function lootCalibrationFitsBudget(calibration) {
+  try {
+    const { width, height } = calibration.display.bounds;
+    captureRectangle(calibration.itemsRoi, width, height);
+    captureRectangle(calibration.contextRoi, width, height);
+    captureRectangle(unionRect(calibration.itemsRoi, calibration.contextRoi), width, height);
+    return !lootSelectionTooLarge(calibration.itemsRoi, calibration.contextRoi, width, height, acceptedRoi);
+  } catch {
+    return false;
+  }
+}
+
+// src/ocr.ts
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+
+// src/powershell.ts
+import { join } from "node:path";
+function powershellExecutable() {
+  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
 // src/ocr.ts
@@ -2841,15 +2889,6 @@ function parsePersonalFeedback(layout, nickname) {
   }
   return [...matches.values()];
 }
-function calibrationFitsBudget(calibration) {
-  try {
-    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
-    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
-  } catch {
-    return false;
-  }
-}
 function matchesCalibration(region, calibration) {
   return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
@@ -3111,16 +3150,6 @@ function copyPixelRect(source2, sourceWidth, x, y, width, height) {
 // src/loot-detector.ts
 function lootCaptureRoi(calibration) {
   return unionRect(calibration.itemsRoi, calibration.contextRoi);
-}
-function lootCalibrationFitsBudget(calibration) {
-  try {
-    const { width, height } = calibration.display.bounds;
-    const items = captureRectangle(calibration.itemsRoi, width, height), context = captureRectangle(calibration.contextRoi, width, height);
-    const whole = captureRectangle(lootCaptureRoi(calibration), width, height);
-    return items.width * items.height <= DELTA_MAX_LOOT_ITEMS_PIXELS && context.width * context.height <= DELTA_MAX_LOOT_CONTEXT_PIXELS && calibration.itemsRoi.width * calibration.itemsRoi.height + calibration.contextRoi.width * calibration.contextRoi.height <= DELTA_MAX_LOOT_ROI_AREA && whole.width * whole.height <= DELTA_MAX_ROI_PIXELS;
-  } catch {
-    return false;
-  }
 }
 function lootStatus(config, combat) {
   const reason = !config.language ? "language-required" : !config.calibration ? "calibration-required" : !lootCalibrationFitsBudget(config.calibration) ? "roi-too-large" : combat?.enabled && combat.language && combat.language !== config.language ? "language-conflict" : null;

@@ -5,8 +5,8 @@ import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet
 import { captureRectangle } from './roi.ts';
 import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
 import { matchesCalibration } from './detector.ts';
-import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_CONTEXT_PIXELS,
-  DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_REFERENCES, DELTA_MAX_LOOT_ROI_AREA, DELTA_MAX_ROI_PIXELS,
+import { lootCalibrationFitsBudget } from './budget.ts';
+import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_REFERENCES,
   DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
 import { unionRect } from './rect.ts';
 import { copyPixelRect } from './image.ts';
@@ -18,16 +18,7 @@ export interface LootMatch { dedupKey: string; signature: Uint8Array; recognitio
 export function lootCaptureRoi(calibration: DeltaLootCalibration): DeltaRoi {
   return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
-export function lootCalibrationFitsBudget(calibration: DeltaLootCalibration): boolean {
-  try {
-    const { width, height } = calibration.display.bounds;
-    const items = captureRectangle(calibration.itemsRoi, width, height), context = captureRectangle(calibration.contextRoi, width, height);
-    const whole = captureRectangle(lootCaptureRoi(calibration), width, height);
-    return items.width * items.height <= DELTA_MAX_LOOT_ITEMS_PIXELS && context.width * context.height <= DELTA_MAX_LOOT_CONTEXT_PIXELS
-      && calibration.itemsRoi.width * calibration.itemsRoi.height + calibration.contextRoi.width * calibration.contextRoi.height <= DELTA_MAX_LOOT_ROI_AREA
-      && whole.width * whole.height <= DELTA_MAX_ROI_PIXELS;
-  } catch { return false; }
-}
+export { lootCalibrationFitsBudget };
 export function lootStatus(config: DeltaLootConfig, combat?: DeltaDetectionConfig): Omit<DeltaLootState, 'config'> {
   const reason = !config.language ? 'language-required' : !config.calibration ? 'calibration-required'
     : !lootCalibrationFitsBudget(config.calibration) ? 'roi-too-large'

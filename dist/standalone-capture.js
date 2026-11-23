@@ -2208,8 +2208,7 @@ function captureRoi(value) {
   if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
   return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
 }
-function captureRectangle(roi, width, height) {
-  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+function outwardRectangle(roi, width, height) {
   const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
   return {
     x,
@@ -2217,6 +2216,10 @@ function captureRectangle(roi, width, height) {
     width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
     height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
   };
+}
+function captureRectangle(roi, width, height) {
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+  return outwardRectangle(roi, width, height);
 }
 
 // src/standalone-capture.ts

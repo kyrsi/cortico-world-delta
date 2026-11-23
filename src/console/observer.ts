@@ -18,7 +18,8 @@ import { setupText } from './strings-setup.ts';
 import { identityCalibration } from './identity-calibration.ts';
 import { screenshotMenu } from './screenshot-menu.ts';
 import { deltaText } from '../i18n/index.ts';
-import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_CONTEXT_PIXELS, DELTA_MAX_LOOT_ROI_AREA, DELTA_KNOWLEDGE_MAX_BYTES } from '../limits.ts';
+import { combatSelectionTooLarge, lootSelectionTooLarge } from '../budget.ts';
+import { DELTA_KNOWLEDGE_MAX_BYTES } from '../limits.ts';
 import './style.css';
 
 export type ObserverAvailability = { kind: 'active' } | { kind: 'inactive' | 'missing' | 'absent'; reason?: string };
@@ -582,15 +583,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   function regionTooLarge(includePersonal = true): boolean {
     if (!calibrationFrame) return false;
     const regions = [calibrationRoi, includePersonal ? personalFeedbackRoi : null].filter((roi): roi is DeltaRoi => roi !== null);
-    const area = regions.reduce((total, roi) => total + roi.width * roi.height, 0);
     const { width, height } = calibrationFrame.display.bounds;
-    const pixels = regions.reduce((total, roi) => {
-      const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
-      const pixelWidth = Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x));
-      const pixelHeight = Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y));
-      return total + pixelWidth * pixelHeight;
-    }, 0);
-    return area > DELTA_MAX_ROI_AREA || pixels > DELTA_MAX_ROI_PIXELS;
+    return combatSelectionTooLarge(regions, width, height);
   }
   function activeRegion(): DeltaRoi | null {
     if (regionPurpose.value === 'items') return itemsRoi;
@@ -602,20 +596,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   }
   function lootRegionsTooLarge(): boolean {
     if (!calibrationFrame) return false;
-    const pixels = (roi: DeltaRoi | null): number => {
-      if (!validRegion(roi)) return 0;
-      const { width, height } = calibrationFrame!.display.bounds;
-      const left = Math.floor(roi.x * width), top = Math.floor(roi.y * height);
-      return Math.max(1, Math.min(width - left, Math.ceil((roi.x + roi.width) * width) - left))
-        * Math.max(1, Math.min(height - top, Math.ceil((roi.y + roi.height) * height) - top));
-    };
-    const regions = [itemsRoi, contextRoi].filter(validRegion);
-    const area = regions.reduce((sum, roi) => sum + roi.width * roi.height, 0);
-    const left = Math.min(...regions.map((roi) => roi.x)), top = Math.min(...regions.map((roi) => roi.y));
-    const right = Math.max(...regions.map((roi) => roi.x + roi.width)), bottom = Math.max(...regions.map((roi) => roi.y + roi.height));
-    const bounds = regions.length ? { x: left, y: top, width: right - left, height: bottom - top } : null;
-    return pixels(itemsRoi) > DELTA_MAX_LOOT_ITEMS_PIXELS || pixels(contextRoi) > DELTA_MAX_LOOT_CONTEXT_PIXELS
-      || area > DELTA_MAX_LOOT_ROI_AREA || pixels(bounds) > DELTA_MAX_ROI_PIXELS;
+    const { width, height } = calibrationFrame.display.bounds;
+    return lootSelectionTooLarge(itemsRoi, contextRoi, width, height, validRegion);
   }
   function syncRegionFields(): void {
     const roi = activeRegion();

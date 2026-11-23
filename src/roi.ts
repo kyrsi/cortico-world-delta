@@ -10,9 +10,13 @@ export function captureRoi(value: unknown): DeltaRoi | null {
 }
 
 /** Outward rounding is shared by calibration budgets and JPEG evidence coordinates. */
-export function captureRectangle(roi: DeltaRoi, width: number, height: number) {
-  if (!captureRoi(roi)) throw new Error('Invalid capture region');
+export function outwardRectangle(roi: DeltaRoi, width: number, height: number) {
   const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
   return { x, y, width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
     height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y)) };
+}
+
+export function captureRectangle(roi: DeltaRoi, width: number, height: number) {
+  if (!captureRoi(roi)) throw new Error('Invalid capture region');
+  return outwardRectangle(roi, width, height);
 }

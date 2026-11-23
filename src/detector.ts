@@ -2,9 +2,9 @@
 import { createHash } from 'node:crypto';
 import { sameDeltaDisplay } from './protocol.ts';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
-import { captureRectangle } from './roi.ts';
+import { calibrationFitsBudget } from './budget.ts';
 import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrPort, type DeltaOcrLayout, type DeltaOcrBox } from './ocr.ts';
-import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
+import { DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
 import { PERSONAL_TEXT_FALLBACKS, PERSONAL_TEXT_FALLBACK_LIMITS, personalTextRaster, restorePersonalLayout } from './personal-text-fallback.ts';
 import { createPersonalSignature, samePersonalSignature, type PersonalSignature } from './personal-notification.ts';
 import { parsePersonalAttribution, personalAttributionRegion } from './personal-attribution.ts';
@@ -121,14 +121,7 @@ export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string):
   return [...matches.values()];
 }
 
-export function calibrationFitsBudget(calibration: DeltaCalibration): boolean {
-  try {
-    const regions = [calibration.roi, ...(calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : [])];
-    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA
-      && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
-  } catch { return false; }
-}
+export { calibrationFitsBudget };
 
 export function matchesCalibration(region: Pick<CapturedRegion, 'display' | 'topologyRevision'>, calibration: DeltaCalibration): boolean {
   return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
