@@ -1,6 +1,7 @@
 import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { PREPARATION_ROIS, SOLO_PREPARATION_MODE_ROI } from './calibration.ts';
 import { measureSafeBox } from './calibration-anchors-grid.ts';
+import { calibrationViewports, project } from './calibration-viewport.ts';
 import type { DeltaOcrBox as Box, DeltaOcrLine, DeltaOcrPort } from './ocr.ts';
 import { doubleOcrRaster } from './personal-text-fallback.ts';
 import type { DeltaCalibrationRegions, DeltaRoi } from './protocol.ts';
@@ -46,45 +47,7 @@ function lineAnchors(line: DeltaOcrLine): Anchor[] {
   return result;
 }
 
-function project(area: Box, roi: DeltaRoi): Box {
-  const x = Math.floor(roi.x * area.width), y = Math.floor(roi.y * area.height);
-  return { x: area.x + x, y: area.y + y, width: Math.ceil((roi.x + roi.width) * area.width) - x,
-    height: Math.ceil((roi.y + roi.height) * area.height) - y };
-}
-
-function hintedViewport(frame: CapturedRegion, hint: string): Box {
-  const [w, h] = hint.split(':').map(Number);
-  const ratio = w && h && w > 0 && h > 0 ? w / h : 16 / 10;
-  const width = Math.max(1, Math.min(frame.width, Math.round(frame.height * ratio)));
-  const height = Math.max(1, Math.min(frame.height, Math.round(frame.width / ratio)));
-  return { x: Math.floor((frame.width - width) / 2), y: Math.floor((frame.height - height) / 2), width, height };
-}
-
-function letterboxedViewport(frame: CapturedRegion): Box {
-  const { width, height } = frame;
-  function border(horizontal: boolean, reverse: boolean) {
-    const across = horizontal ? width : height, extent = horizontal ? height : width;
-    for (let offset = 0; offset < extent * .32; offset++) {
-      const coordinate = reverse ? extent - 1 - offset : offset;
-      let dark = 0;
-      for (let n = 0; n < 48; n++) {
-        const cross = Math.floor((n + .5) * across / 48);
-        const at = (horizontal ? coordinate * width + cross : cross * width + coordinate) * 4;
-        if (Math.max(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!) <= 8) dark++;
-      }
-      if (dark < 47) return offset;
-    }
-    return 0;
-  }
-  const pair = (horizontal: boolean) => {
-    const near = border(horizontal, false), far = border(horizontal, true);
-    return Math.min(near, far) >= 4 && Math.abs(near - far) <= Math.max(3, near * .04) ? [near, far] as const : [0, 0] as const;
-  };
-  const [x, right] = pair(false), [y, bottom] = pair(true);
-  return { x, y, width: width - x - right, height: height - y - bottom };
-}
-
-function scanRaster(frame: CapturedRegion, box: Box, enlargeText: boolean, maxScale: number) {
+export function scanRaster(frame: CapturedRegion, box: Box, enlargeText: boolean, maxScale: number) {
   const budget = 1_750_000;
   if (enlargeText && 4 * box.width * box.height <= budget && Math.max(box.width, box.height) <= 1150) {
     const gray = new Uint8Array(box.width * box.height);
@@ -209,8 +172,8 @@ function preparationFocus(frame: CapturedRegion, anchors: Anchor[]): Box[] {
 
 /** Ratio selects the first search windows. Returned rectangles are measured in the complete captured frame. */
 export async function detectCalibrationAnchors(frame: CapturedRegion, aspectRatio: string, ocr: Pick<DeltaOcrPort, 'recognizeLayout'>): Promise<CalibrationAnchors | null> {
-  const whole: Box = { x: 0, y: 0, width: frame.width, height: frame.height };
-  const hinted = hintedViewport(frame, aspectRatio);
+  const areas = calibrationViewports(frame, aspectRatio);
+  const whole = areas[2];
   const scanned = new Set<string>(), anchors: Anchor[] = [];
   const measured = new Map<string, ReturnType<typeof measureSafeBox>>();
   async function scan(box: Box, enlarge = false, maxScale = 2.4) {
@@ -242,8 +205,6 @@ export async function detectCalibrationAnchors(frame: CapturedRegion, aspectRati
     }
     return chosen && { scene: 'inventory', loot: { contextRoi: relative(chosen.title, frame), itemsRoi: relative(chosen.items, frame) } };
   }
-  // The native screen can be stretched or letterboxed independently of the game's selected aspect ratio.
-  const areas = [hinted, letterboxedViewport(frame), whole];
   for (const area of areas) {
     await scan(project(area, { x: .24, y: .49, width: .42, height: .43 }));
     const loot = inventory();

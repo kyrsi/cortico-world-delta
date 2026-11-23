@@ -1,5 +1,6 @@
 /** Local OCR text rules are a fallback for one calibrated notification; they infer no icon semantics. */
 import { createHash } from 'node:crypto';
+import { sameDeltaDisplay } from './protocol.ts';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { captureRectangle } from './roi.ts';
 import { createOcr, type DeltaOcrPort, type DeltaOcrLayout, type DeltaOcrBox } from './ocr.ts';
@@ -41,6 +42,19 @@ function sameBaseline(a: DeltaOcrBox, b: DeltaOcrBox): boolean {
     && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) <= height * 0.35;
 }
 
+function joinedTextAt(words: readonly { text: string; box: DeltaOcrBox }[], boundary: number): boolean {
+  let offset = 0;
+  for (const [index, word] of words.entries()) {
+    offset += compact(word.text).length;
+    if (offset > boundary) return true;
+    if (offset === boundary) {
+      const next = words[index + 1]?.box;
+      return !!next && next.x - (word.box.x + word.box.width) <= Math.min(word.box.height, next.height) * 0.25;
+    }
+  }
+  return false;
+}
+
 function personalFeedbackRows(layout: DeltaOcrLayout) {
   const words = layout.lines.flatMap((line) => line.words);
   return words.filter((word) => compact(word.text).includes('击')).map((anchor) => {
@@ -48,18 +62,25 @@ function personalFeedbackRows(layout: DeltaOcrLayout) {
     const text = row.map((word) => word.text).join(' '), normalized = compact(text), actions = [...normalized.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0]! : null;
     const prefix = normalized.slice(0, action?.index ?? normalized.indexOf('击'));
-    return { row, anchor, text, normalized, action, assisted: /协|助/u.test(prefix) };
+    const end = action ? action.index! + action[0].length : 0;
+    const settingsLabel = !!action && (/(?:[与和或及]|[杀倒败][、/]|启用|监测|配置|识别|回应|统计)$/u.test(prefix)
+      || (!prefix && normalized.slice(end) === '识别' && joinedTextAt(row, end)));
+    return { row, anchor, text, normalized, action, settingsLabel, assisted: /协|助/u.test(prefix) };
   });
 }
 
 export function assistedPersonalRows(layout: DeltaOcrLayout): DeltaOcrBox[] {
-  return layout.truncated ? [] : personalFeedbackRows(layout).filter((row) => row.assisted).map((row) => row.anchor.box);
+  return layout.truncated ? [] : personalFeedbackRows(layout).filter(row => row.assisted && !row.settingsLabel).map(row => row.anchor.box);
 }
 
 /** Same-frame OCR variants can retain an assist prefix even when its action glyph is unreadable. */
 export function attributePersonalFeedback(matches: readonly DetectionMatch[], layouts: readonly DeltaOcrLayout[], view: 'own' | 'other' | 'unknown' = 'own'): DetectionMatch[] {
-  const assisted = layouts.flatMap(assistedPersonalRows);
-  return matches.map((match) => {
+  const rows = layouts.filter(layout => !layout.truncated).flatMap(personalFeedbackRows);
+  const assisted = rows.filter(row => row.assisted && !row.settingsLabel).map(row => row.anchor.box);
+  // A more complete reading of the same caption overrides a clipped action from another OCR pass.
+  const captions = rows.filter(row => row.settingsLabel);
+  const candidates = matches.filter(match => !match.personalAction || !captions.some(row => sameBaseline(row.anchor.box, match.personalAction!)));
+  return candidates.map((match) => {
     if (match.recognition.kind !== 'personal-feedback-text') return match;
     const uncertain = view === 'unknown' || layouts.some((layout) => layout.truncated) || match.attribution.relation === 'unknown';
     const assist = match.attribution.assisted || !!match.personalAction && assisted.some((box) => sameBaseline(box, match.personalAction!));
@@ -73,8 +94,8 @@ export function attributePersonalFeedback(matches: readonly DetectionMatch[], la
 export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string): DetectionMatch[] {
   if (layout.truncated || !nickname.trim()) return [];
   const matches = new Map<string, DetectionMatch>();
-  for (const { row, text, normalized, action, assisted } of personalFeedbackRows(layout)) {
-    if (!action) continue;
+  for (const { row, text, normalized, action, assisted, settingsLabel } of personalFeedbackRows(layout)) {
+    if (!action || settingsLabel) continue;
     const kind = action[0] === '击倒' ? 'knockdown' : 'kill', target = normalized.slice(action.index! + action[0].length);
     let offset = 0;
     const boxes: DeltaOcrBox[] = [], targetBoxes: DeltaOcrBox[] = [];
@@ -110,7 +131,7 @@ export function calibrationFitsBudget(calibration: DeltaCalibration): boolean {
 }
 
 export function matchesCalibration(region: Pick<CapturedRegion, 'display' | 'topologyRevision'>, calibration: DeltaCalibration): boolean {
-  return region.topologyRevision === calibration.topologyRevision && JSON.stringify(region.display) === JSON.stringify(calibration.display);
+  return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
 
 export function detectionStatus(config: DeltaDetectionConfig): Omit<DeltaDetectionState, 'config'> {

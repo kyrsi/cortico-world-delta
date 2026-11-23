@@ -4,7 +4,7 @@ import { DELTA_DEFAULTS, deltaConfigOptions, type DeltaConfigSection } from './c
 import { deltaText } from './i18n/index.ts';
 import { DeltaWorld, type DeltaWorldOptions } from './world.ts';
 
-export interface DeltaAssembly extends Pick<DeltaWorldOptions, 'binding' | 'frameSourceModule' | 'modelLanguage' | 'calibrationOperation' | 'screenshotReveal' | 'random'> {
+export interface DeltaAssembly extends Pick<DeltaWorldOptions, 'binding' | 'standalone' | 'frameSourceModule' | 'modelLanguage' | 'calibrationOperation' | 'screenshotReveal' | 'random'> {
   language?(): Language;
   onCreate?(world: DeltaWorld): void;
 }

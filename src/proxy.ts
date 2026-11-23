@@ -3,7 +3,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { childExecArgv } from 'cortico/extensions/runtime.ts';
 import type { Logger } from 'cortico/core/types.ts';
-import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaWorkerSettings, MainToChild } from './engine-ipc.ts';
+import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaWorkerSettings, IdentityDebugProgress, IdentityProgressSink, MainToChild } from './engine-ipc.ts';
 import type { DeltaReason } from './protocol.ts';
 
 function launchEngine(output: 'pipe' | 'ignore'): ChildProcess {
@@ -12,9 +12,9 @@ function launchEngine(output: 'pipe' | 'ignore'): ChildProcess {
   });
 }
 
-export async function runCalibrationOperation(request: CalibrationWorkerRequest, signal: AbortSignal): Promise<CalibrationWorkerResult> {
-  const failure = { status: 'capture-unavailable' } as const;
-  if (signal.aborted) return failure;
+export async function runCalibrationOperation(request: CalibrationWorkerRequest, signal: AbortSignal, progress?: IdentityProgressSink): Promise<CalibrationWorkerResult> {
+  const failure = (reason: string) => ({ status: 'capture-unavailable' as const, ...(request.kind === 'identity-suggest' && { reason }) });
+  if (signal.aborted) return failure('cancelled');
   try {
     const child = launchEngine('ignore');
     return await new Promise<CalibrationWorkerResult>((resolve) => {
@@ -23,20 +23,25 @@ export async function runCalibrationOperation(request: CalibrationWorkerRequest,
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        signal.removeEventListener('abort', unavailable);
+        signal.removeEventListener('abort', cancelled);
         child.kill();
         resolve(result);
       };
-      const unavailable = () => finish(failure);
-      const timer = setTimeout(unavailable, request.kind === 'calibration-suggest' ? 25_000 : 5000);
-      signal.addEventListener('abort', unavailable, { once: true });
-      child.once('message', finish);
+      const unavailable = () => finish(failure('worker-failed'));
+      const cancelled = () => finish(failure('cancelled'));
+      const timer = setTimeout(() => finish(failure('worker-timeout')), request.kind === 'calibration-source' ? 5000 : 25_000);
+      signal.addEventListener('abort', cancelled, { once: true });
+      child.on('message', (message: CalibrationWorkerResult | IdentityDebugProgress) => {
+        if (settled) return;
+        if ('status' in message) finish(message);
+        else if (request.kind === 'identity-suggest') progress?.(message);
+      });
       child.once('error', unavailable);
       child.once('exit', unavailable);
-      try { child.send(request, (error) => { if (error) unavailable(); }); }
+      try { child.send({ ...request, identityDebug: request.kind === 'identity-suggest' && !!progress }, (error) => { if (error) unavailable(); }); }
       catch { unavailable(); }
     });
-  } catch { return failure; }
+  } catch { return failure('worker-failed'); }
 }
 
 export class DeltaWorker {

@@ -19,7 +19,11 @@ await build({
 
 await build({
   ...options,
-  entryPoints: { index: 'src/index.ts', 'engine-child': 'src/engine-child.ts' },
+  entryPoints: {
+    index: 'src/index.ts',
+    'engine-child': 'src/engine-child.ts',
+    'standalone-capture': 'src/standalone-capture.ts',
+  },
   platform: 'node',
   target: 'node22',
   external: ['cortico/*'],

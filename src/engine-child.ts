@@ -99,8 +99,15 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
         if (!active) return;
         latest = null;
         lootDetector?.clearVisible();
-        send({ kind: 'error', generation, reason: 'source-unavailable', message: String(err) });
-        captureTimer = setTimeout(sample, Math.max(1000, settings.captureIntervalMs));
+        const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+        if (code === 'captureTransportFailed' || code === 'captureFailed') {
+          active = false;
+          if (heartbeat) clearInterval(heartbeat);
+          send({ kind: 'error', generation, reason: 'worker-failed', message: String(err) });
+        } else {
+          send({ kind: 'error', generation, reason: 'source-unavailable', message: String(err) });
+          captureTimer = setTimeout(sample, Math.max(1000, settings.captureIntervalMs));
+        }
       }
     })();
   };
@@ -136,8 +143,10 @@ process.on('message', (message: MainToChild | CalibrationWorkerRequest) => {
     void source!.capture(displayId).then((capture) => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture }); })
       .catch(() => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture: null }); });
   }
-  else if (message.kind === 'calibration-suggest' || message.kind === 'calibration-source') {
-    void runCalibrationCapture(message).then((result) => { if (process.connected) process.send?.(result); });
+  else if (message.kind === 'calibration-suggest' || message.kind === 'calibration-source' || message.kind === 'calibration-preview' || message.kind === 'identity-suggest') {
+    const progress = message.kind === 'identity-suggest' && message.identityDebug;
+    void runCalibrationCapture(message, progress ? event => { if (process.connected) process.send?.(event); } : undefined)
+      .then((result) => { if (process.connected) process.send?.(result); });
   }
 });
 process.on('disconnect', () => { void stop().finally(() => process.exit(0)); });

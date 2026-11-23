@@ -1,8 +1,7 @@
-import { isDeepStrictEqual } from 'node:util';
 import type { CuaFrame } from 'cortico-world-desktop-pet';
 import { calibrationFitsBudget } from './detector.ts';
 import { lootCalibrationFitsBudget } from './loot-detector.ts';
-import { DEFAULT_GAME_ASPECT_RATIO, type DeltaCalibration, type DeltaCalibrationRegions, type DeltaGameAspectRatio, type DeltaLootCalibration, type DeltaPreparationAnchors, type DeltaPreparationRegionSource, type DeltaRoi } from './protocol.ts';
+import { DEFAULT_GAME_ASPECT_RATIO, sameDeltaDisplay, type DeltaCalibration, type DeltaCalibrationRegions, type DeltaGameAspectRatio, type DeltaLootCalibration, type DeltaPreparationAnchors, type DeltaPreparationRegionSource, type DeltaRoi } from './protocol.ts';
 
 const WIDTH = 2560;
 const HEIGHT = 1440;
@@ -29,7 +28,7 @@ export function supportsPreparation(source: CalibrationSource): boolean {
 }
 
 export function sameCalibrationSource(a: CalibrationSource, b: CalibrationSource): boolean {
-  return a.topologyRevision === b.topologyRevision && isDeepStrictEqual(a.display, b.display);
+  return a.topologyRevision === b.topologyRevision && sameDeltaDisplay(a.display, b.display);
 }
 
 const center = (roi: DeltaRoi) => ({ x: roi.x + roi.width / 2, y: roi.y + roi.height / 2 });

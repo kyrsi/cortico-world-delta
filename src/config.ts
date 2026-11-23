@@ -13,6 +13,7 @@ export interface DeltaSpeechSettings extends Omit<DeltaSpeechConfig, 'eventKinds
 }
 export interface DeltaConfigSection extends WorldSection {
   observer: { enabled: boolean };
+  standaloneDisplayId: string;
   captureIntervalMs: number;
   calibrationHotkeyEnabled: boolean;
   gameAspectRatio: DeltaGameAspectRatio;
@@ -26,7 +27,7 @@ export const DELTA_SPEECH_DEFAULTS: DeltaSpeechConfig = {
   enabled: true, probability: 0.5, cooldownMs: 45_000, eventKinds: ['kill', 'knockdown', 'loot'], relations: ['self'], style: 'playful',
 };
 export const DELTA_DEFAULTS: DeltaConfigSection = {
-  enabled: false, observer: { enabled: false }, captureIntervalMs: 1000, calibrationHotkeyEnabled: true, gameAspectRatio: DEFAULT_GAME_ASPECT_RATIO,
+  enabled: false, observer: { enabled: false }, standaloneDisplayId: '', captureIntervalMs: 1000, calibrationHotkeyEnabled: true, gameAspectRatio: DEFAULT_GAME_ASPECT_RATIO,
   detection: { enabled: false, nickname: '', language: '', calibration: null },
   loot: { enabled: false, language: '', sensitivity: 'balanced', calibration: null },
   speech: { enabled: DELTA_SPEECH_DEFAULTS.enabled, probability: DELTA_SPEECH_DEFAULTS.probability,
@@ -44,7 +45,7 @@ export function deltaConfigOptions(kind: string, language: Language): Array<{ va
   return Object.entries(deltaText(language).speechStyles).map(([value, label]) => ({ value, label }));
 }
 
-export function deltaConfigGroups(language: Language = 'zh'): ConfigGroup[] {
+export function deltaConfigGroups(language: Language = 'zh', hostControls = true, hotkeyAvailable = hostControls): ConfigGroup[] {
   const t = deltaText(language), labels = configGroupText(language);
   const owner = 'world:delta';
   const integer = (title: string, minimum: number, maximum: number) => ({ type: 'integer' as const, title, minimum, maximum, 'x-hot': true as const });
@@ -57,10 +58,10 @@ export function deltaConfigGroups(language: Language = 'zh'): ConfigGroup[] {
   });
   return [
     group(owner, labels.observation, {
-      'observer.enabled': { type: 'boolean', title: t.observer, 'x-hot': true },
+      ...(hostControls && { 'observer.enabled': { type: 'boolean' as const, title: t.observer, 'x-hot': true as const } }),
       captureIntervalMs: duration(t.captureIntervalMs, 20, 10_000),
       gameAspectRatio: { type: 'string', title: labels.gameAspectRatio, description: labels.gameAspectRatioDescription, enum: [...DELTA_GAME_ASPECT_RATIOS], 'x-hot': true },
-      calibrationHotkeyEnabled: { type: 'boolean', title: labels.hotkey, description: labels.hotkeyDescription, 'x-hot': true },
+      ...(hotkeyAvailable && { calibrationHotkeyEnabled: { type: 'boolean' as const, title: labels.hotkey, description: labels.hotkeyDescription, 'x-hot': true as const } }),
     }),
     group(`${owner}.detection`, labels.combat, {
       'detection.enabled': { type: 'boolean', title: t.detectionEnabled, 'x-hot': true },

@@ -3,6 +3,11 @@ import type { CuaDisplay, CuaFrame } from 'cortico-world-desktop-pet';
 import type { PersonalTextFallback } from './personal-text-fallback.ts';
 
 export const DELTA_PROTOCOL_VERSION = 1;
+export function sameDeltaDisplay(a: CuaDisplay, b: CuaDisplay): boolean {
+  return a.id === b.id && a.name === b.name && a.primary === b.primary && a.systemNumber === b.systemNumber
+    && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && a.bounds.x === b.bounds.x
+    && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+}
 export type DeltaKind = 'kill' | 'knockdown' | 'loot';
 export interface DeltaSpeechConfig {
   enabled: boolean;
@@ -83,6 +88,8 @@ export interface DeltaPreparationAnchors { start: DeltaRoi; actions: DeltaRoi }
 export type DeltaPreparationRegionSource = 'preset' | 'saved' | 'estimated';
 export type DeltaCalibrationDiagnostic = 'unsupported-layout' | 'scene-unrecognized' | 'ocr-unavailable';
 export type DeltaCalibrationFailure = DeltaCalibrationDiagnostic | 'capture-unavailable';
+export type DeltaIdentitySuggestion = { status: 'candidate'; nickname: string }
+  | { status: 'profile-unrecognized' | 'nickname-unreadable' | 'ocr-unavailable' | 'capture-unavailable' };
 export type DeltaCalibrationSuggestion = ({ status: 'ready'; frame: CuaFrame; expiresAt: string;
   /** @deprecated Retained as null for older calibration panels. */
   nickname: string | null;
@@ -221,11 +228,16 @@ export interface DeltaState {
   phase: DeltaPhase;
   reason: DeltaReason | null;
   startBlockedReason?: DeltaReason | null;
+  captureMode?: 'host' | 'standalone' | 'unsupported';
+  standaloneGranted?: boolean;
+  /** Standalone screen authorized for explicit calibration captures only. */
+  calibrationDisplayId?: string | null;
   bound: boolean;
   source: CuaDisplay | null;
   configuredDisplayId: string;
   gameAspectRatio: DeltaGameAspectRatio;
   calibrationHotkey?: DeltaCalibrationHotkeyState;
+  identityDebug?: { hasLog: boolean; pendingFrames: boolean };
   worker: { pid: number | null; heartbeatAt: string | null; restarts: number; captures: number };
   pending: number;
   events: DeltaEvent[];
@@ -238,10 +250,14 @@ export interface DeltaState {
 }
 
 export interface DeltaSimulationReceipt { accepted: boolean; reason: DeltaDropReason | null; eventId: string | null; state: DeltaState }
+export interface DeltaQuickSetupRequest { combat: boolean; loot: boolean; language: Exclude<DeltaGameLanguage, ''> }
 export type DeltaScreenshotRevealRequest = { kind: 'preview'; frameId: string }
   | { kind: 'event'; eventId: string; frameId: string; part: 'full' | 'crop' };
 
 export interface DeltaPanelMethods {
+  identitySuggest: { args: []; result: DeltaIdentitySuggestion & { attemptId?: string; reason?: string; screenshot?: string | null } };
+  identityDebugReveal: { args: []; result: { ok: true } };
+  identitySave: { args: [nickname: string]; result: DeltaState };
   speechConfigure: { args: [request: DeltaSpeechConfig]; result: DeltaState };
   knowledgeRead: { args: []; result: { content: string; state: DeltaKnowledgeState } };
   knowledgeImport: { args: [request: DeltaKnowledgeImportRequest]; result: DeltaState };
@@ -249,6 +265,11 @@ export interface DeltaPanelMethods {
   knowledgeRestore: { args: []; result: DeltaState };
   state: { args: []; result: DeltaState };
   start: { args: []; result: DeltaState };
+  listStandaloneDisplays: { args: []; result: CuaDisplay[] };
+  prepareCalibration: { args: [displayId: string]; result: DeltaState };
+  cancelCalibration: { args: []; result: DeltaState };
+  quickSetupConfigure: { args: [request: DeltaQuickSetupRequest]; result: DeltaState };
+  startStandalone: { args: [displayId: string]; result: DeltaState };
   pause: { args: []; result: DeltaState };
   stop: { args: []; result: DeltaState };
   simulate: { args: [request: DeltaSimulateRequest]; result: DeltaSimulationReceipt };

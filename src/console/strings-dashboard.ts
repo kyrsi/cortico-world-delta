@@ -1,7 +1,9 @@
 import type { Language } from 'cortico/core/language.ts';
 
 const en = {
-  readiness: 'Recognition readiness', settings: 'Observation settings', calibration: 'Manual area calibration',
+  readiness: 'Recognition status', settings: 'Observation settings', calibration: 'Manual area calibration',
+  canObserve: 'Ready to start', needsScreen: 'Screen permission required',
+  watchCombat: 'Watching for kills and knockdowns', watchLoot: 'Watching for red-tier items',
   combat: 'Combat recognition', loot: 'Red-tier item recognition', incomplete: 'Setup required',
   configureCombat: 'Configure combat', configureLoot: 'Configure red-tier items',
   sourcePending: 'Display selected, awaiting capture', lootLanguage: 'Choose the item interface language.',
@@ -12,7 +14,9 @@ const en = {
 const TEXT: Record<Language, typeof en> = {
   en,
   zh: {
-    readiness: '识别准备', settings: '观察配置', calibration: '手动校准区域',
+    readiness: '识别状态', settings: '观察配置', calibration: '手动校准区域',
+    canObserve: '可开始观察', needsScreen: '需要屏幕授权',
+    watchCombat: '监测击杀与击倒', watchLoot: '监测红色物品',
     combat: '战斗识别', loot: '出红识别', incomplete: '待补充配置',
     configureCombat: '配置战斗识别', configureLoot: '配置出红识别',
     sourcePending: '已选择屏幕，等待采集', lootLanguage: '请选择物品界面语言。',
@@ -20,7 +24,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: '出红识别检查搜刮、容器和背包界面的物品网格与标题。灵敏度决定哪些候选会报告。',
   },
   'zh-Hant': {
-    readiness: '辨識準備', settings: '觀察配置', calibration: '手動校準區域',
+    readiness: '辨識狀態', settings: '觀察配置', calibration: '手動校準區域',
+    canObserve: '可開始觀察', needsScreen: '需要螢幕授權',
+    watchCombat: '監測擊殺與擊倒', watchLoot: '監測紅色物品',
     combat: '戰鬥辨識', loot: '紅色品質物品辨識', incomplete: '待補充配置',
     configureCombat: '配置戰鬥辨識', configureLoot: '配置物品辨識',
     sourcePending: '已選擇螢幕，等待擷取', lootLanguage: '請選擇物品介面語言。',
@@ -28,7 +34,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: '物品辨識會檢查搜刮、容器和背包介面的物品格與標題。靈敏度決定回報哪些候選物品。',
   },
   ja: {
-    readiness: '認識の準備状況', settings: '観察設定', calibration: '範囲の手動調整',
+    readiness: '認識状況', settings: '観察設定', calibration: '範囲の手動調整',
+    canObserve: '観察を開始できます', needsScreen: '画面の読み取り許可が必要',
+    watchCombat: 'キルとダウンを監視中', watchLoot: '赤品質アイテムを監視中',
     combat: '戦闘の認識', loot: '赤品質アイテムの認識', incomplete: '設定が必要',
     configureCombat: '戦闘の認識を設定', configureLoot: '赤品質アイテムの認識を設定',
     sourcePending: '画面を選択済み。キャプチャ待ち', lootLanguage: 'アイテム画面の言語を選択してください。',
@@ -36,7 +44,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: '漁り、コンテナ、インベントリの画面でアイテム欄と見出しを確認します。感度によって報告する候補が変わります。',
   },
   ko: {
-    readiness: '인식 준비 상태', settings: '관찰 설정', calibration: '영역 수동 보정',
+    readiness: '인식 상태', settings: '관찰 설정', calibration: '영역 수동 보정',
+    canObserve: '관찰 시작 가능', needsScreen: '화면 읽기 권한 필요',
+    watchCombat: '처치 및 쓰러뜨림 감지 중', watchLoot: '빨간 등급 아이템 감지 중',
     combat: '전투 인식', loot: '빨간 등급 아이템 인식', incomplete: '설정 필요',
     configureCombat: '전투 인식 설정', configureLoot: '빨간 등급 아이템 설정',
     sourcePending: '화면 선택 완료, 캡처 대기 중', lootLanguage: '아이템 화면 언어를 선택하세요.',
@@ -44,7 +54,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: '전리품, 컨테이너, 인벤토리 화면의 아이템 칸과 제목을 확인합니다. 민감도에 따라 보고되는 후보가 달라집니다.',
   },
   fr: {
-    readiness: 'État de préparation', settings: 'Réglages de l’observation', calibration: 'Calibrage manuel des zones',
+    readiness: 'État de la détection', settings: 'Réglages de l’observation', calibration: 'Calibrage manuel des zones',
+    canObserve: 'Prêt à observer', needsScreen: 'Autorisation de capture requise',
+    watchCombat: 'Détection des éliminations et mises à terre', watchLoot: 'Détection des objets rouges',
     combat: 'Reconnaissance des combats', loot: 'Reconnaissance des objets de qualité rouge', incomplete: 'Configuration requise',
     configureCombat: 'Configurer les combats', configureLoot: 'Configurer les objets rouges',
     sourcePending: 'Écran sélectionné, en attente de capture', lootLanguage: 'Choisissez la langue de l’interface des objets.',
@@ -52,7 +64,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: 'La reconnaissance vérifie la grille et les titres des écrans de butin, de conteneur et d’inventaire. La sensibilité détermine les objets signalés.',
   },
   de: {
-    readiness: 'Bereitschaft der Erkennung', settings: 'Beobachtungseinstellungen', calibration: 'Bereiche manuell kalibrieren',
+    readiness: 'Erkennungsstatus', settings: 'Beobachtungseinstellungen', calibration: 'Bereiche manuell kalibrieren',
+    canObserve: 'Beobachtung startbereit', needsScreen: 'Bildschirmfreigabe erforderlich',
+    watchCombat: 'Abschüsse und Niederschläge werden erkannt', watchLoot: 'Rote Gegenstände werden erkannt',
     combat: 'Kampferkennung', loot: 'Erkennung von Gegenständen roter Qualität', incomplete: 'Einrichtung erforderlich',
     configureCombat: 'Kampferkennung einrichten', configureLoot: 'Rote Gegenstände einrichten',
     sourcePending: 'Bildschirm ausgewählt, Aufnahme steht aus', lootLanguage: 'Wählen Sie die Sprache der Gegenstandsansicht.',
@@ -60,7 +74,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: 'Die Erkennung prüft das Gegenstandsraster und die Überschriften in Beute-, Behälter- und Inventaransichten. Die Empfindlichkeit bestimmt, welche Funde gemeldet werden.',
   },
   'es-419': {
-    readiness: 'Preparación del reconocimiento', settings: 'Configuración de la observación', calibration: 'Calibración manual de áreas',
+    readiness: 'Estado de detección', settings: 'Configuración de la observación', calibration: 'Calibración manual de áreas',
+    canObserve: 'Listo para observar', needsScreen: 'Se requiere permiso de captura',
+    watchCombat: 'Buscando bajas y derribos', watchLoot: 'Buscando objetos rojos',
     combat: 'Reconocimiento de combate', loot: 'Reconocimiento de objetos de calidad roja', incomplete: 'Falta configurar',
     configureCombat: 'Configurar combate', configureLoot: 'Configurar objetos rojos',
     sourcePending: 'Pantalla seleccionada, esperando la captura', lootLanguage: 'Elige el idioma de la interfaz de objetos.',
@@ -68,7 +84,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: 'El reconocimiento revisa la cuadrícula y los títulos de las pantallas de botín, contenedor e inventario. La sensibilidad determina qué candidatos se informan.',
   },
   'pt-BR': {
-    readiness: 'Preparação do reconhecimento', settings: 'Configurações da observação', calibration: 'Calibração manual das áreas',
+    readiness: 'Estado da detecção', settings: 'Configurações da observação', calibration: 'Calibração manual das áreas',
+    canObserve: 'Pronto para observar', needsScreen: 'Permissão de captura necessária',
+    watchCombat: 'Monitorando eliminações e derrubadas', watchLoot: 'Monitorando itens vermelhos',
     combat: 'Reconhecimento de combate', loot: 'Reconhecimento de itens de qualidade vermelha', incomplete: 'Configuração necessária',
     configureCombat: 'Configurar combate', configureLoot: 'Configurar itens vermelhos',
     sourcePending: 'Tela selecionada, aguardando captura', lootLanguage: 'Escolha o idioma da interface de itens.',
@@ -76,7 +94,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: 'O reconhecimento verifica a grade e os títulos nas telas de saque, contêiner e inventário. A sensibilidade define quais candidatos são relatados.',
   },
   it: {
-    readiness: 'Stato di preparazione', settings: 'Impostazioni dell’osservazione', calibration: 'Calibrazione manuale delle aree',
+    readiness: 'Stato del rilevamento', settings: 'Impostazioni dell’osservazione', calibration: 'Calibrazione manuale delle aree',
+    canObserve: 'Osservazione pronta', needsScreen: 'Permesso di cattura richiesto',
+    watchCombat: 'Rilevamento di eliminazioni e atterramenti', watchLoot: 'Rilevamento degli oggetti rossi',
     combat: 'Riconoscimento del combattimento', loot: 'Riconoscimento degli oggetti di qualità rossa', incomplete: 'Configurazione necessaria',
     configureCombat: 'Configura il combattimento', configureLoot: 'Configura gli oggetti rossi',
     sourcePending: 'Schermo selezionato, in attesa di acquisizione', lootLanguage: 'Scegli la lingua dell’interfaccia oggetti.',
@@ -84,7 +104,9 @@ const TEXT: Record<Language, typeof en> = {
     lootHint: 'Il riconoscimento verifica la griglia e i titoli nelle schermate di bottino, contenitori e inventario. La sensibilità determina quali candidati vengono segnalati.',
   },
   ru: {
-    readiness: 'Готовность распознавания', settings: 'Настройки наблюдения', calibration: 'Ручная калибровка областей',
+    readiness: 'Состояние распознавания', settings: 'Настройки наблюдения', calibration: 'Ручная калибровка областей',
+    canObserve: 'Можно начать наблюдение', needsScreen: 'Требуется разрешение на захват экрана',
+    watchCombat: 'Отслеживание убийств и нокдаунов', watchLoot: 'Поиск красных предметов',
     combat: 'Распознавание боя', loot: 'Распознавание предметов красного качества', incomplete: 'Требуется настройка',
     configureCombat: 'Настроить распознавание боя', configureLoot: 'Настроить распознавание красных предметов',
     sourcePending: 'Экран выбран, ожидается захват', lootLanguage: 'Выберите язык интерфейса предметов.',

@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/jpeg-js/lib/encoder.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js
 var require_encoder = __commonJS({
-  "node_modules/jpeg-js/lib/encoder.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js"(exports, module) {
     var btoa = btoa || function(buf) {
       return Buffer.from(buf).toString("base64");
     };
@@ -1105,9 +1105,9 @@ var require_encoder = __commonJS({
   }
 });
 
-// node_modules/jpeg-js/lib/decoder.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js
 var require_decoder = __commonJS({
-  "node_modules/jpeg-js/lib/decoder.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js"(exports, module) {
     var JpegImage = (function jpegImage() {
       "use strict";
       var dctZigZag = new Int32Array([
@@ -2167,9 +2167,9 @@ var require_decoder = __commonJS({
   }
 });
 
-// node_modules/jpeg-js/index.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js
 var require_jpeg_js = __commonJS({
-  "node_modules/jpeg-js/index.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js"(exports, module) {
     var encode = require_encoder();
     var decode = require_decoder();
     module.exports = {
@@ -2183,11 +2183,14 @@ var require_jpeg_js = __commonJS({
 var import_jpeg_js3 = __toESM(require_jpeg_js(), 1);
 import { randomUUID } from "node:crypto";
 
-// src/calibration.ts
-import { isDeepStrictEqual } from "node:util";
-
 // src/detector.ts
 import { createHash } from "node:crypto";
+
+// src/protocol.ts
+function sameDeltaDisplay(a, b) {
+  return a.id === b.id && a.name === b.name && a.primary === b.primary && a.systemNumber === b.systemNumber && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+}
+var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 
 // src/roi.ts
 function captureRectangle(roi, width, height) {
@@ -2647,13 +2650,13 @@ function personalAttributionRegion(evidence) {
 }
 function parsePersonalAttribution(layout, nickname, spectatorFrame = false) {
   if (layout.truncated || !layout.lines.some((line) => line.text.trim())) return "unknown";
-  const compact2 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
-  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compact2(line.text)).join(" ");
+  const compact4 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
+  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compact4(line.text)).join(" ");
   const controls = [/切换观战(?:对象)?|SWITCHSPECTAT/u, /观战名片|SPECTATORCARD/u, /退出观战|EXITSPECTAT/u];
   if (controls.filter((control) => control.test(footer)).length >= 2) return "other";
-  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compact2(line.text)).join("");
-  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compact2(line.text)));
-  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compact2(nickname) ? "other" : "own";
+  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compact4(line.text)).join("");
+  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compact4(line.text)));
+  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compact4(nickname) ? "other" : "own";
 }
 
 // src/detector.ts
@@ -2683,6 +2686,18 @@ function sameBaseline(a, b) {
   const height = Math.max(a.height, b.height), overlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
   return Math.min(a.height, b.height) >= height / 2 && overlap >= Math.min(a.height, b.height) * 0.6 && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) <= height * 0.35;
 }
+function joinedTextAt(words, boundary) {
+  let offset = 0;
+  for (const [index, word] of words.entries()) {
+    offset += compact(word.text).length;
+    if (offset > boundary) return true;
+    if (offset === boundary) {
+      const next = words[index + 1]?.box;
+      return !!next && next.x - (word.box.x + word.box.width) <= Math.min(word.box.height, next.height) * 0.25;
+    }
+  }
+  return false;
+}
 function personalFeedbackRows(layout) {
   const words = layout.lines.flatMap((line) => line.words);
   return words.filter((word) => compact(word.text).includes("\u51FB")).map((anchor) => {
@@ -2690,15 +2705,17 @@ function personalFeedbackRows(layout) {
     const text = row.map((word) => word.text).join(" "), normalized2 = compact(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0] : null;
     const prefix = normalized2.slice(0, action?.index ?? normalized2.indexOf("\u51FB"));
-    return { row, anchor, text, normalized: normalized2, action, assisted: /协|助/u.test(prefix) };
+    const end = action ? action.index + action[0].length : 0;
+    const settingsLabel = !!action && (/(?:[与和或及]|[杀倒败][、/]|启用|监测|配置|识别|回应|统计)$/u.test(prefix) || !prefix && normalized2.slice(end) === "\u8BC6\u522B" && joinedTextAt(row, end));
+    return { row, anchor, text, normalized: normalized2, action, settingsLabel, assisted: /协|助/u.test(prefix) };
   });
 }
-function assistedPersonalRows(layout) {
-  return layout.truncated ? [] : personalFeedbackRows(layout).filter((row) => row.assisted).map((row) => row.anchor.box);
-}
 function attributePersonalFeedback(matches, layouts, view = "own") {
-  const assisted = layouts.flatMap(assistedPersonalRows);
-  return matches.map((match) => {
+  const rows = layouts.filter((layout) => !layout.truncated).flatMap(personalFeedbackRows);
+  const assisted = rows.filter((row) => row.assisted && !row.settingsLabel).map((row) => row.anchor.box);
+  const captions = rows.filter((row) => row.settingsLabel);
+  const candidates = matches.filter((match) => !match.personalAction || !captions.some((row) => sameBaseline(row.anchor.box, match.personalAction)));
+  return candidates.map((match) => {
     if (match.recognition.kind !== "personal-feedback-text") return match;
     const uncertain = view === "unknown" || layouts.some((layout) => layout.truncated) || match.attribution.relation === "unknown";
     const assist = match.attribution.assisted || !!match.personalAction && assisted.some((box) => sameBaseline(box, match.personalAction));
@@ -2715,8 +2732,8 @@ function attributePersonalFeedback(matches, layouts, view = "own") {
 function parsePersonalFeedback(layout, nickname) {
   if (layout.truncated || !nickname.trim()) return [];
   const matches = /* @__PURE__ */ new Map();
-  for (const { row, text, normalized: normalized2, action, assisted } of personalFeedbackRows(layout)) {
-    if (!action) continue;
+  for (const { row, text, normalized: normalized2, action, assisted, settingsLabel } of personalFeedbackRows(layout)) {
+    if (!action || settingsLabel) continue;
     const kind = action[0] === "\u51FB\u5012" ? "knockdown" : "kill", target = normalized2.slice(action.index + action[0].length);
     let offset = 0;
     const boxes = [], targetBoxes = [];
@@ -2760,7 +2777,7 @@ function calibrationFitsBudget(calibration) {
   return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
 }
 function matchesCalibration(region, calibration) {
-  return region.topologyRevision === calibration.topologyRevision && JSON.stringify(region.display) === JSON.stringify(calibration.display);
+  return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
 function detectionStatus(config) {
   const calibration = config.calibration;
@@ -2975,11 +2992,11 @@ function lootStatus(config, combat) {
 function parseLootContext(layout) {
   if (layout.truncated) return null;
   const text = layout.lines.map((line) => line.text).join(" ").normalize("NFKC").toUpperCase();
-  const compact2 = text.replace(/\s+/gu, ""), contains = (pattern) => pattern.test(text) || pattern.test(compact2);
-  const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains).length;
+  const compact4 = text.replace(/\s+/gu, ""), contains2 = (pattern) => pattern.test(text) || pattern.test(compact4);
+  const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains2).length;
   if (!classes) return null;
-  if (contains(/容器|搜索物资|\bCONTAINER\b/u)) return "container";
-  if (contains(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return "loot";
+  if (contains2(/容器|搜索物资|\bCONTAINER\b/u)) return "container";
+  if (contains2(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return "loot";
   const capacityHeading = layout.lines.some((line) => {
     const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(line.text.normalize("NFKC").replace(/\s+/gu, ""));
     return match && Number(match[2]) > 0 && Number(match[1]) <= Number(match[2]);
@@ -3314,9 +3331,6 @@ var LootDetector = class {
   }
 };
 
-// src/protocol.ts
-var DEFAULT_GAME_ASPECT_RATIO = "16:10";
-
 // src/calibration.ts
 var WIDTH = 2560;
 var HEIGHT = 1440;
@@ -3340,7 +3354,7 @@ function supportsPreparation(source2) {
   return source2.display.bounds.width === WIDTH && source2.display.bounds.height === HEIGHT;
 }
 function sameCalibrationSource(a, b) {
-  return a.topologyRevision === b.topologyRevision && isDeepStrictEqual(a.display, b.display);
+  return a.topologyRevision === b.topologyRevision && sameDeltaDisplay(a.display, b.display);
 }
 
 // src/calibration-anchors-grid.ts
@@ -3478,41 +3492,7 @@ function measureSafeBox(frame, anchor) {
   return { title: offset(title), items: offset(items) };
 }
 
-// src/calibration-anchors.ts
-var labels = {
-  start: /^[开犴]始游戏$/u,
-  gear: /^配装$/u,
-  deploy: /^出发$/u,
-  squad: /^出发[[(]?[1-3彐]\/([3彐引])[\])]?$/u,
-  solo: /^行前备战$/u,
-  mode: /^端游对局[一、]?$/u,
-  matching: /^(匹配成功|正在匹配|正在搜索对局)$/u,
-  safe: /^(安全箱|保险箱|safebox|securecontainer)$/u
-};
-var labelPatterns = Object.entries(labels);
-var extent = (a, b) => {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-};
-function lineAnchors(line) {
-  const result = [];
-  for (let first = 0; first < line.words.length; first++) {
-    let text = "", box = line.words[first].box;
-    for (let last = first; last < Math.min(line.words.length, first + 10); last++) {
-      const word = line.words[last];
-      text += word.text.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
-      if (text.length > 16) break;
-      box = extent(box, word.box);
-      const label = labelPatterns.find(([name, pattern]) => pattern.test(name === "safe" ? text.replace(/[:;：；]+$/u, "") : text))?.[0];
-      if (!label) continue;
-      const previous = line.words[first - 1], next = line.words[last + 1];
-      if (previous && /[\p{L}\p{N}]$/u.test(previous.text.trim()) && box.x - previous.box.x - previous.box.width < box.height * 0.6) continue;
-      if (next && (label === "safe" ? new RegExp("^\\p{L}", "u") : /^[\p{L}\p{N}]/u).test(next.text.trim()) && next.box.x - box.x - box.width < box.height * 0.6) continue;
-      result.push({ label, box });
-    }
-  }
-  return result;
-}
+// src/calibration-viewport.ts
 function project(area, roi) {
   const x = Math.floor(roi.x * area.width), y = Math.floor(roi.y * area.height);
   return {
@@ -3551,6 +3531,45 @@ function letterboxedViewport(frame) {
   };
   const [x, right] = pair(false), [y, bottom] = pair(true);
   return { x, y, width: width - x - right, height: height - y - bottom };
+}
+function calibrationViewports(frame, aspectRatio) {
+  return [hintedViewport(frame, aspectRatio), letterboxedViewport(frame), { x: 0, y: 0, width: frame.width, height: frame.height }];
+}
+
+// src/calibration-anchors.ts
+var labels = {
+  start: /^[开犴]始游戏$/u,
+  gear: /^配装$/u,
+  deploy: /^出发$/u,
+  squad: /^出发[[(]?[1-3彐]\/([3彐引])[\])]?$/u,
+  solo: /^行前备战$/u,
+  mode: /^端游对局[一、]?$/u,
+  matching: /^(匹配成功|正在匹配|正在搜索对局)$/u,
+  safe: /^(安全箱|保险箱|safebox|securecontainer)$/u
+};
+var labelPatterns = Object.entries(labels);
+var extent = (a, b) => {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+};
+function lineAnchors(line) {
+  const result = [];
+  for (let first = 0; first < line.words.length; first++) {
+    let text = "", box = line.words[first].box;
+    for (let last = first; last < Math.min(line.words.length, first + 10); last++) {
+      const word = line.words[last];
+      text += word.text.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+      if (text.length > 16) break;
+      box = extent(box, word.box);
+      const label = labelPatterns.find(([name, pattern]) => pattern.test(name === "safe" ? text.replace(/[:;：；]+$/u, "") : text))?.[0];
+      if (!label) continue;
+      const previous = line.words[first - 1], next = line.words[last + 1];
+      if (previous && /[\p{L}\p{N}]$/u.test(previous.text.trim()) && box.x - previous.box.x - previous.box.width < box.height * 0.6) continue;
+      if (next && (label === "safe" ? new RegExp("^\\p{L}", "u") : /^[\p{L}\p{N}]/u).test(next.text.trim()) && next.box.x - box.x - box.width < box.height * 0.6) continue;
+      result.push({ label, box });
+    }
+  }
+  return result;
 }
 function scanRaster(frame, box, enlargeText, maxScale) {
   const budget = 175e4;
@@ -3670,8 +3689,8 @@ function preparationFocus(frame, anchors) {
   return start2 ? candidates : candidates.map((box) => ({ ...box, y: Math.max(0, box.y - 3 * size), height: Math.min(box.y, 3 * size) }));
 }
 async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
-  const whole = { x: 0, y: 0, width: frame.width, height: frame.height };
-  const hinted = hintedViewport(frame, aspectRatio);
+  const areas = calibrationViewports(frame, aspectRatio);
+  const whole = areas[2];
   const scanned = /* @__PURE__ */ new Set(), anchors = [];
   const measured = /* @__PURE__ */ new Map();
   async function scan(box, enlarge = false, maxScale = 2.4) {
@@ -3702,7 +3721,6 @@ async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
     }
     return chosen && { scene: "inventory", loot: { contextRoi: relative(chosen.title, frame), itemsRoi: relative(chosen.items, frame) } };
   }
-  const areas = [hinted, letterboxedViewport(frame), whole];
   for (const area of areas) {
     await scan(project(area, { x: 0.24, y: 0.49, width: 0.42, height: 0.43 }));
     const loot = inventory();
@@ -3732,6 +3750,456 @@ async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
     if (ready) return ready;
   }
   return null;
+}
+
+// src/profile-identity.ts
+var compact2 = (value) => value.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
+var profileTitles = /* @__PURE__ */ new Set(["\u4E2A\u4EBA\u4FE1\u606F", "\u4E2A\u4EBA\u8D44\u6599", "\u4E2A\u4EBA\u6863\u6848", "\u6211\u7684\u8D44\u6599", "\u6211\u7684\u6863\u6848", "myprofile", "playerprofile", "playerinfo", "personalinformation"]);
+var nicknameLabel = /^(?:(?:玩\s*家\s*|游\s*戏\s*|角\s*色\s*)?昵\s*称|(?:player\s+name|nick\s*name))(?=\s|[:：]|$)[\s:：]*(.*)$/iu;
+var uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
+var placeholders = /* @__PURE__ */ new Set(["\u533F\u540D\u73A9\u5BB6", "anonymousplayer"]);
+var profileTab = { x: 0.066, y: 0.047, width: 0.069, height: 0.047 };
+var watermarkFormat = /^(?:cn)?uid[:#]?(\d{8,24})(?:_\d+)?$/u;
+var playerNumberFormat = /^(?:编号|uid|playerid)[:#]?(\d{8,24})$/u;
+var isProfileTitle = (text) => profileTitles.has(compact2(text));
+var excludesOwnProfile = (text) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compact2(text));
+var hasNicknameLabel = (text) => nicknameLabel.test(text.trim());
+function validIdentityNickname(value) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
+  const name = value.trim();
+  return !placeholders.has(compact2(name)) && !uidField.test(name.normalize("NFKC"));
+}
+function adjacentValue(label, other) {
+  const a = label.box, b = other.box;
+  const overlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  const gap = b.x - (a.x + a.width);
+  return other !== label && overlap >= 0.65 * Math.min(a.height, b.height) && gap >= 0 && gap <= 4 * a.height;
+}
+function contains(area, box) {
+  return box.x >= area.x && box.y >= area.y && box.x + box.width <= area.x + area.width && box.y + box.height <= area.y + area.height;
+}
+function selectedProfileTab(frame, area) {
+  const stripe = project(area, { x: 0.072, y: 0.087, width: 0.056, height: 0.01 });
+  for (let y = stripe.y; y < stripe.y + stripe.height; y++) {
+    let green = 0;
+    for (let i = 0; i < 16; i++) {
+      const x = stripe.x + Math.floor((i + 0.5) * stripe.width / 16);
+      const p = (y * frame.width + x) * 4;
+      const b = frame.bgra[p], g = frame.bgra[p + 1], r = frame.bgra[p + 2];
+      if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+    }
+    if (green >= 15) return true;
+  }
+  return false;
+}
+function accountNumber(lines, area, format) {
+  const matches = lines.filter((line) => contains(area, line.box)).map((line) => format.exec(compact2(line.text))?.[1]).filter(Boolean);
+  return matches.length === 1 ? matches[0] : void 0;
+}
+function frameLines(layout, frame) {
+  const sx = frame.width / layout.width, sy = frame.height / layout.height;
+  return layout.lines.map((line) => ({ ...line, box: {
+    x: line.box.x * sx,
+    y: line.box.y * sy,
+    width: line.box.width * sx,
+    height: line.box.height * sy
+  } }));
+}
+function cardAccounts(lines, area) {
+  const watermark = project(area, { x: 0, y: 0, width: 0.35, height: 0.04 });
+  const footer = project(area, { x: 0.737, y: 0.899, width: 0.22, height: 0.047 });
+  return { account: accountNumber(lines, watermark, watermarkFormat), player: accountNumber(lines, footer, playerNumberFormat) };
+}
+function validCardName(name) {
+  return validIdentityNickname(name) && /^[\p{L}\p{M}\p{N}_-]+$/u.test(name) && new RegExp("\\p{L}", "u").test(name) && !isProfileTitle(name) && !/^(?:编号|uid|playerid|lv|等级)[_-]?\d*$/iu.test(name);
+}
+function cardNameLine(lines, area) {
+  const row = project(area, { x: 0.755, y: 0.788, width: 0.193, height: 0.023 });
+  const overlapping = lines.filter(({ box }) => box.y < row.y + row.height && box.y + box.height > row.y && box.x < row.x + row.width && box.x + box.width > row.x);
+  if (overlapping.length !== 1) return;
+  const line = overlapping[0];
+  if (contains(row, line.box) && line.box.x <= area.x + 0.761 * area.width && validCardName(line.text.trim())) return line;
+}
+function cardIdentity(layout, frame, aspectRatio, labeledName) {
+  const lines = frameLines(layout, frame);
+  const candidates = new Set(labeledName ? [labeledName] : []);
+  let selected = false, inactiveCard = false, activeCard = false;
+  for (const area of calibrationViewports(frame, aspectRatio)) {
+    const tab = project(area, profileTab);
+    if (!lines.some((line) => contains(tab, line.box) && profileTitles.has(compact2(line.text)))) continue;
+    const { account, player } = cardAccounts(lines, area);
+    if (account && player && account !== player) return { status: "profile-unrecognized" };
+    if (!selectedProfileTab(frame, area)) {
+      if (account && player) inactiveCard = true;
+      continue;
+    }
+    selected = true;
+    if (!account || !player) continue;
+    activeCard = true;
+    const name = cardNameLine(lines, area);
+    if (name) candidates.add(name.text.trim());
+  }
+  if (inactiveCard && !activeCard) return { status: "profile-unrecognized" };
+  const [nickname] = candidates;
+  if (nickname && candidates.size === 1) return { status: "candidate", nickname };
+  return { status: selected ? "nickname-unreadable" : "profile-unrecognized" };
+}
+function profileIdentity(layout, frame, aspectRatio = DEFAULT_GAME_ASPECT_RATIO) {
+  const lines = layout.lines;
+  if (!lines.some((line) => isProfileTitle(line.text)) || lines.some((line) => excludesOwnProfile(line.text))) {
+    return { status: "profile-unrecognized" };
+  }
+  if (layout.truncated) return { status: "nickname-unreadable" };
+  const candidates = /* @__PURE__ */ new Set();
+  for (const line of lines) {
+    const match = nicknameLabel.exec(line.text.trim());
+    if (!match) continue;
+    const neighbors = match[1] ? [match[1]] : lines.filter((other) => adjacentValue(line, other)).map((other) => other.text);
+    if (neighbors.length !== 1) return { status: "nickname-unreadable" };
+    const name = neighbors[0].trim();
+    if (!validIdentityNickname(name) || !/[\p{L}]/u.test(name) || /[:：]|\s(?:UID|玩家\s*ID)(?=[\s\d#=_-]|$)/iu.test(name) || profileTitles.has(compact2(name))) return { status: "nickname-unreadable" };
+    candidates.add(name);
+  }
+  const [nickname] = candidates;
+  if (candidates.size <= 1 && frame) return cardIdentity(layout, frame, aspectRatio, nickname);
+  return nickname && candidates.size === 1 ? { status: "candidate", nickname } : { status: "nickname-unreadable" };
+}
+
+// src/profile-name-region.ts
+var nativeAspect = 16 / 9;
+function* horizontalRuns(area, bright) {
+  const right = area.x + area.width;
+  for (let y = area.y; y < area.y + area.height; y++) {
+    let x = area.x;
+    while (x < right) {
+      while (x < right && !bright(x, y)) x++;
+      const start2 = x;
+      while (x < right && bright(x, y)) x++;
+      if (x > start2) yield { x: start2, y, width: x - start2 };
+    }
+  }
+}
+function briefcaseTop(viewport, bright) {
+  const area = project(viewport, { x: 0.742, y: 0.79, width: 0.016, height: 0.012 });
+  const sy = viewport.height / 1440;
+  for (const run of horizontalRuns(area, bright)) {
+    if (run.width < 65e-4 * viewport.width || run.width > 0.012 * viewport.width) continue;
+    const sample = (u, dy) => bright(run.x + Math.round((run.width - 1) * u), run.y + Math.round(dy * sy));
+    if (sample(0.2, -2) || sample(0.8, -2) || sample(0.5, -2)) continue;
+    if (!sample(0.18, 2) || !sample(0.82, 2) || !sample(0.18, 10) || !sample(0.82, 10)) continue;
+    if (!sample(0.5, 5) && sample(0.5, 11)) return run;
+  }
+}
+function matchesPencil(line, viewport, bright) {
+  const height = line.width * nativeAspect * viewport.height / viewport.width;
+  const gapY = line.y - Math.max(1, Math.round(height * 0.13));
+  for (let x = line.x; x < line.x + line.width; x++) if (bright(x, gapY)) return false;
+  const matchesSlice = (dy, center) => {
+    const y = line.y - dy;
+    let left = line.width, right = -1;
+    for (let dx = 0; dx < line.width; dx++) {
+      if (bright(line.x + dx, y)) {
+        left = Math.min(left, dx);
+        right = dx;
+      }
+    }
+    return right >= left && right - left + 1 <= line.width * 0.43 && Math.abs((left + right + 1) / (2 * line.width) - center) <= 0.15;
+  };
+  for (let dy = Math.round(height * 0.24); dy <= Math.round(height * 0.71); dy++) {
+    if (!matchesSlice(dy, 0.92 * dy / height - 0.105)) return false;
+  }
+  return matchesSlice(Math.round(height * 0.91), 0.8);
+}
+function profileNameRegion(frame, viewport, report) {
+  const missing = (reason) => {
+    report?.(reason);
+    return null;
+  };
+  const neutral = (threshold) => (x2, y2) => {
+    const at = (y2 * frame.width + x2) * 4;
+    const b = frame.bgra[at], g = frame.bgra[at + 1], r = frame.bgra[at + 2];
+    const low = Math.min(r, g, b);
+    return low >= threshold && Math.max(r, g, b) - low <= 32;
+  };
+  const inkPixel = neutral(145);
+  const badge = briefcaseTop(viewport, inkPixel);
+  if (!badge) return missing("badge-missing");
+  const row = project(viewport, { x: 0.754, y: 0.7885, width: 0.218, height: 0.0235 });
+  const baselines = project(viewport, { x: 0.754, y: 0.802, width: 0.218, height: 0.011 });
+  const shaft = neutral(117);
+  let pencil;
+  for (const run of horizontalRuns(baselines, neutral(102))) {
+    if (run.x <= badge.x + badge.width || run.width < 6e-3 * viewport.width || run.width > 0.011 * viewport.width) continue;
+    if (!matchesPencil(run, viewport, shaft)) continue;
+    if (pencil && Math.abs(pencil.x - run.x) > run.width * 0.2) return missing("pencil-ambiguous");
+    pencil = run;
+  }
+  if (!pencil) return missing("pencil-missing");
+  let start2 = badge.x + badge.width;
+  for (let y2 = badge.y; y2 < row.y + row.height; y2++) {
+    let x2 = badge.x + Math.floor(0.75 * badge.width);
+    while (x2 < pencil.x && inkPixel(x2, y2)) x2++;
+    start2 = Math.max(start2, x2);
+  }
+  const end = pencil.x;
+  let left = end, right = start2 - 1, top = row.y + row.height, bottom = row.y - 1;
+  for (let y2 = row.y; y2 < row.y + row.height; y2++) for (let x2 = start2; x2 < end; x2++) {
+    if (!inkPixel(x2, y2)) continue;
+    left = Math.min(left, x2);
+    right = Math.max(right, x2);
+    top = Math.min(top, y2);
+    bottom = Math.max(bottom, y2);
+  }
+  if (right < left) return missing("no-ink");
+  if (left <= start2 || right >= end - 1 || top <= row.y || bottom >= row.y + row.height - 1) return missing("ink-touches-edge");
+  const ink = { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  if (left - start2 > badge.width * 0.7 || end - right > badge.width * 1.2) return missing("icon-gap");
+  const padX = Math.max(1, Math.round(ink.height * 0.22 * viewport.width / (viewport.height * nativeAspect)));
+  const padY = Math.max(1, Math.round(ink.height * 0.25));
+  const x = Math.max(start2, left - padX), y = Math.max(row.y, top - padY);
+  report?.("found");
+  return { box: {
+    x,
+    y,
+    width: Math.min(end, right + 1 + padX) - x,
+    height: Math.min(row.y + row.height, bottom + 1 + padY) - y
+  }, ink };
+}
+
+// src/profile-recognition.ts
+var unreadable = { status: "nickname-unreadable" };
+var unrecognized = { status: "profile-unrecognized" };
+var compact3 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
+var historyTab = { x: 0.135, y: 0.047, width: 0.066, height: 0.047 };
+function singleLine(layout) {
+  return layout && !layout.truncated && layout.lines.length === 1 ? layout.lines[0] : void 0;
+}
+async function readField(read, field, box, format) {
+  for (const twice of [false, true]) {
+    const line = singleLine(await read(field, box, twice));
+    const match = line && format.exec(compact3(line.text));
+    if (match) return match[1];
+  }
+}
+async function recognizedTab(read, area) {
+  const box = project(area, profileTab);
+  let nearTitle = false;
+  for (const twice of [false, true]) {
+    const line = singleLine(await read("profile-tab", box, twice));
+    if (!line) continue;
+    const title = compact3(line.text);
+    if (isProfileTitle(title)) return "exact";
+    if (new RegExp("^\\p{Script=Han}{4}$", "u").test(title) && [...title].filter((c, i) => c !== "\u4E2A\u4EBA\u4FE1\u606F"[i]).length === 1) nearTitle = true;
+  }
+  if (!nearTitle) return "no-match";
+  const history = await readField(read, "history-tab", project(area, historyTab), /^(历史战绩)$/u);
+  return history ? "history-confirmed" : "history-unconfirmed";
+}
+function lineRegion(ink, frame) {
+  const pad = Math.ceil(ink.height * 0.2);
+  const x = Math.max(0, Math.floor(ink.x) - pad), y = Math.max(0, Math.floor(ink.y) - pad);
+  return { ink, box: {
+    x,
+    y,
+    width: Math.min(frame.width, Math.ceil(ink.x + ink.width) + pad) - x,
+    height: Math.min(frame.height, Math.ceil(ink.y + ink.height) + pad) - y
+  } };
+}
+function nameText(line) {
+  const name = line.text.trim();
+  if (validCardName(name)) return { name };
+  const tokens = name.split(/\s+/u);
+  if (tokens.length < 2 || tokens.length !== line.words.length || !tokens.every((token, i) => token === line.words[i].text)) {
+    return { rejection: "invalid-text" };
+  }
+  for (let i = 1; i < line.words.length; i++) {
+    const left = line.words[i - 1], right = line.words[i];
+    if (!new RegExp("\\p{Script=Han}$", "u").test(left.text) && !new RegExp("^\\p{Script=Han}", "u").test(right.text)) return { rejection: "invalid-text" };
+    const gap = right.box.x - left.box.x - left.box.width;
+    const overlap = Math.min(left.box.y + left.box.height, right.box.y + right.box.height) - Math.max(left.box.y, right.box.y);
+    const height = Math.min(left.box.height, right.box.height);
+    if (gap < -0.1 * height || gap > 0.2 * height || overlap < 0.65 * height) return { rejection: "word-spacing" };
+  }
+  const joined = tokens.join("");
+  return validCardName(joined) ? { name: joined } : { rejection: "invalid-text" };
+}
+async function readName(read, region, overviewName, trace) {
+  const { box, ink } = region;
+  let previous = overviewName;
+  let complete = false;
+  for (const twice of [false, true]) {
+    const scale = twice ? 2 : 1;
+    const layout = await read("nickname", box, twice);
+    const line = singleLine(layout);
+    if (!layout) continue;
+    if (!line) {
+      trace?.({ stage: "name-reading", scale, result: "no-single-line" });
+      continue;
+    }
+    const reading = nameText(line);
+    if ("rejection" in reading) {
+      trace?.({ stage: "name-reading", scale, result: reading.rejection });
+      continue;
+    }
+    const { name } = reading;
+    if (previous && previous !== name) {
+      trace?.({ stage: "name-reading", scale, result: "conflict" });
+      return;
+    }
+    const corroborated = name === previous;
+    previous = name;
+    const toFrame = box.width / layout.width;
+    const left = box.x + line.box.x * toFrame, right = left + line.box.width * toFrame;
+    const slack = Math.max(2, ink.height * 0.16);
+    const leftErrorPx = left - ink.x, rightErrorPx = right - ink.x - ink.width;
+    const coversInk = Math.abs(leftErrorPx) <= slack && Math.abs(rightErrorPx) <= slack;
+    trace?.({
+      stage: "name-reading",
+      scale,
+      leftErrorPx,
+      rightErrorPx,
+      tolerancePx: slack,
+      result: !coversInk ? "ink-edges-mismatch" : corroborated ? "corroborated" : "covers-ink"
+    });
+    if (!coversInk) continue;
+    complete = true;
+    if (corroborated) return name;
+  }
+  return complete ? previous : void 0;
+}
+async function recognizeProfile(frame, aspectRatio, ocr2, deadline = Date.now() + 2e4, trace) {
+  let ocrCalls = 0, deadlineSkipped = false;
+  const finish = (result, reason) => {
+    trace?.({ stage: "finish", status: result.status, reason, ocrCalls, localOcrStarted: ocrCalls > 1, deadlineSkipped });
+    return result;
+  };
+  const performOcr = async (field, box, scale, raster) => {
+    ocrCalls++;
+    trace?.({ stage: "ocr-start", field, box, scale, width: raster.width, height: raster.height });
+    try {
+      const layout = await ocr2.recognizeLayout({ ...frame, ...raster });
+      trace?.({ stage: "ocr-result", field, box, scale, lineCount: layout.lines.length, truncated: layout.truncated });
+      return layout;
+    } catch (error) {
+      finish({ status: "ocr-unavailable" }, "ocr-error");
+      throw error;
+    }
+  };
+  trace?.({ stage: "recognition-start", deadline, remainingMs: Math.max(0, deadline - Date.now()) });
+  const areas = calibrationViewports(frame, aspectRatio);
+  const overview = await performOcr("overview", areas[2], 1, scanRaster(frame, areas[2], false, 1));
+  if (overview.lines.some((line) => excludesOwnProfile(line.text))) return finish(unrecognized, "excluded-page");
+  if (overview.truncated) return finish(unreadable, "overview-truncated");
+  const lines = frameLines(overview, frame);
+  const legacy = profileIdentity(overview);
+  const labeled = overview.lines.some((line) => hasNicknameLabel(line.text));
+  trace?.({ stage: "legacy", status: legacy.status, hasNicknameLabel: labeled });
+  if (labeled && legacy.status === "nickname-unreadable") return finish(legacy, "legacy-label-unreadable");
+  const tiles = /* @__PURE__ */ new Map();
+  let card = false, selected = false;
+  const read = async (field, box, twice) => {
+    const scale = twice ? 2 : 1;
+    const key = [box.x, box.y, box.width, box.height, twice].join("/");
+    const previous = tiles.get(key);
+    if (previous) {
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "cached" });
+      return previous;
+    }
+    if (Date.now() >= deadline) {
+      deadlineSkipped = true;
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "deadline" });
+      return;
+    }
+    const raster = scanRaster(frame, box, twice, 1);
+    if (twice && (raster.width !== 2 * box.width || raster.height !== 2 * box.height)) {
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "scale-unavailable" });
+      return;
+    }
+    const layout = await performOcr(field, box, scale, raster);
+    tiles.set(key, layout);
+    return layout;
+  };
+  const sameViewport = (a, b) => Math.abs(a.x - b.x) <= frame.width * 3e-3 && Math.abs(a.width - b.width) <= frame.width * 3e-3 && Math.abs(a.y - b.y) <= frame.height * 3e-3 && Math.abs(a.height - b.height) <= frame.height * 3e-3;
+  const [hint, measured, whole] = areas;
+  const viewports = [measured];
+  if (!sameViewport(hint, measured)) viewports.unshift(hint);
+  if (!viewports.some((area) => sameViewport(area, whole))) viewports.push(whole);
+  for (const area of viewports) {
+    const selectedGreenLine = selectedProfileTab(frame, area);
+    trace?.({ stage: "viewport", kind: area === hint ? "hint" : area === measured ? "measured" : "whole", box: area, selectedGreenLine });
+    if (!selectedGreenLine) continue;
+    selected = true;
+    const evidence = await recognizedTab(read, area);
+    trace?.({ stage: "title", evidence });
+    if (evidence !== "exact" && evidence !== "history-confirmed") continue;
+    card = true;
+    const full = cardAccounts(lines, area);
+    const account = full.account ?? await readField(read, "watermark", project(area, { x: 0.011, y: 3e-3, width: 0.18, height: 0.022 }), watermarkFormat);
+    const player = full.player ?? await readField(read, "player-number", project(area, { x: 0.743, y: 0.902, width: 0.128, height: 0.032 }), playerNumberFormat);
+    trace?.({ stage: "accounts", hasAccount: !!account, hasPlayer: !!player, match: account && player ? account === player : null });
+    if (account && player && account !== player) return finish(unrecognized, "account-mismatch");
+    const fullName = cardNameLine(lines, area);
+    const iconRegion = profileNameRegion(frame, area, trace && ((result) => trace({ stage: "name-icons", result })));
+    const region = iconRegion ?? (account && player && fullName ? lineRegion(fullName.box, frame) : null);
+    if (!region) {
+      trace?.({ stage: "name-region", source: "missing" });
+      continue;
+    }
+    const { box, ink } = region;
+    trace?.({ stage: "name-region", source: iconRegion ? "icons" : "overview", box, ink, paddingPx: {
+      left: ink.x - box.x,
+      top: ink.y - box.y,
+      right: box.x + box.width - ink.x - ink.width,
+      bottom: box.y + box.height - ink.y - ink.height
+    } });
+    const name = await readName(read, region, fullName?.text.trim(), trace);
+    if (!name) return finish(unreadable, "nickname-unreadable");
+    if (legacy.status === "candidate" && legacy.nickname !== name) return finish(unreadable, "legacy-name-conflict");
+    return finish({ status: "candidate", nickname: name }, "card-candidate");
+  }
+  if (!card) {
+    if (legacy.status !== "candidate") return finish(legacy, selected ? "title-unconfirmed" : "no-selected-tab");
+    const playerCard = viewports.some((area) => {
+      const { account, player } = cardAccounts(lines, area);
+      return account && player || profileNameRegion(frame, area);
+    });
+    return playerCard ? finish(unrecognized, "legacy-card-veto") : finish(legacy, "legacy-candidate");
+  }
+  return finish(unreadable, "name-region-missing");
+}
+
+// src/identity-debug-png.ts
+import { crc32, deflateSync } from "node:zlib";
+function chunk(type, data) {
+  const result = Buffer.allocUnsafe(12 + data.length);
+  result.writeUInt32BE(data.length);
+  result.write(type, 4, 4, "ascii");
+  data.copy(result, 8);
+  result.writeUInt32BE(crc32(result.subarray(4, -4)), result.length - 4);
+  return result;
+}
+function encodeIdentityFrame({ width, height, bgra }) {
+  const header2 = Buffer.alloc(13);
+  header2.writeUInt32BE(width);
+  header2.writeUInt32BE(height, 4);
+  header2[8] = 8;
+  header2[9] = 2;
+  const scanlines = Buffer.allocUnsafe(height * (1 + width * 3));
+  let read = 0, write = 0;
+  for (let y = 0; y < height; y++) {
+    scanlines[write++] = 0;
+    for (let x = 0; x < width; x++, read += 4) {
+      scanlines[write++] = bgra[read + 2];
+      scanlines[write++] = bgra[read + 1];
+      scanlines[write++] = bgra[read];
+    }
+  }
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    chunk("IHDR", header2),
+    chunk("IDAT", deflateSync(scanlines, { level: 1 })),
+    chunk("IEND", Buffer.alloc(0))
+  ]);
 }
 
 // src/calibration-capture.ts
@@ -3765,24 +4233,111 @@ async function analyzeCapture(request, region, capture) {
     return { status: "ocr-unavailable", capture };
   }
 }
-async function runCalibrationCapture(request) {
+function errorReason(error, operation) {
+  const message = error instanceof Error ? error.message : "";
+  if (/timed?\s*out/i.test(message)) return operation + "-timeout";
+  if (message === "OCR region exceeds pixel limit") return "ocr-pixel-limit";
+  if (message === "displayChanged" || message === "displayUnavailable") return message === "displayChanged" ? "source-changed" : "display-unavailable";
+  return operation + "-exception";
+}
+function errorDetails(error) {
+  if (!(error instanceof Error)) return {};
+  const locations = [];
+  for (const line of (error.stack ?? "").split("\n").slice(1)) {
+    const location = /[\\/]((?:profile-[a-z-]+|calibration(?:-[a-z-]+)?|engine-child|standalone-capture|identity-debug-png|ocr)\.(?:js|ts):\d+:\d+)\)?$/.exec(line);
+    if (location) locations.push(location[1]);
+    if (locations.length === 4) break;
+  }
+  const errorType = ["TypeError", "RangeError", "ReferenceError", "SyntaxError"].includes(error.name) ? error.name : "Error";
+  return { errorType, locations };
+}
+async function readProfile(region, language, aspectRatio, deadline, progress) {
+  let operation = "open-ocr";
+  try {
+    const ocr2 = await createOcr(language || "zh-CN");
+    try {
+      progress?.({ kind: "trace", event: { stage: "ocr-open", language: ocr2.language, availableLanguages: ocr2.availableLanguages } });
+      if (!ocr2.language) return { status: "identity", suggestion: { status: "ocr-unavailable" }, reason: "ocr-language-unavailable" };
+      operation = "recognize-profile";
+      const suggestion = await recognizeProfile(region, aspectRatio, ocr2, deadline, progress ? (event) => progress({ kind: "trace", event }) : void 0);
+      return { status: "identity", suggestion };
+    } finally {
+      await ocr2.close();
+    }
+  } catch (error) {
+    const reason = errorReason(error, "ocr");
+    progress?.({ kind: "trace", event: { stage: "error", operation, reason, ...errorDetails(error) } });
+    return { status: "identity", suggestion: { status: "ocr-unavailable" }, reason };
+  }
+}
+async function runCalibrationCapture(request, sink) {
+  const identityDeadline = Date.now() + 2e4;
   let source2;
+  const identity = request.kind === "identity-suggest";
+  const progress = identity && sink ? (event) => {
+    try {
+      sink(event);
+    } catch {
+    }
+  } : void 0;
+  const failure = (reason) => ({ status: "capture-unavailable", ...identity && { reason } });
+  let operation = "open-source";
   try {
     const module = await import(request.frameSourceModule);
     source2 = await module.createFrameSource();
+    operation = "probe-display";
     const probe = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
-    if (request.displayId ? probe.display.id !== request.displayId : !probe.display.primary) return { status: "capture-unavailable" };
+    if (request.displayId ? probe.display.id !== request.displayId : !probe.display.primary) return failure("display-mismatch");
     if (request.kind === "calibration-source") return { status: "source", source: { display: probe.display, topologyRevision: probe.topologyRevision } };
     const { width, height } = probe.display.bounds;
+    progress?.({ kind: "trace", event: {
+      stage: "display",
+      width,
+      height,
+      displayId: probe.display.id,
+      systemNumber: probe.display.systemNumber,
+      scaleFactor: probe.display.scaleFactor
+    } });
     if (width * height > MAX_CAPTURE_PIXELS) return { status: "unsupported-layout" };
+    if (request.kind === "calibration-preview") {
+      const capture2 = await source2.capture(request.displayId);
+      return sameCalibrationSource(probe, capture2.frame) && capture2.jpeg.byteLength <= DELTA_MAX_JPEG_BYTES ? { status: "manual-preview", capture: capture2 } : failure("source-changed");
+    }
+    if (identity) {
+      operation = "capture-frame";
+      const region2 = await source2.captureRoi(request.displayId, FULL_DISPLAY);
+      if (!sameCalibrationSource(probe, region2)) return failure("source-changed");
+      if (region2.width !== width || region2.height !== height || region2.bgra.byteLength !== width * height * 4) return failure("invalid-frame");
+      if (progress) {
+        try {
+          progress({
+            kind: "frame",
+            width,
+            height,
+            displayId: region2.display.id,
+            systemNumber: region2.display.systemNumber,
+            capturedAt: region2.capturedAt,
+            png: encodeIdentityFrame(region2)
+          });
+        } catch (error) {
+          progress({ kind: "trace", event: { stage: "error", operation: "encode-frame", reason: "png-encoding-failed", ...errorDetails(error) } });
+        }
+      }
+      const result2 = await readProfile(region2, request.language || "zh-CN", request.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO, identityDeadline, progress);
+      operation = "verify-display";
+      const current2 = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
+      return sameCalibrationSource(current2, probe) ? result2 : failure("source-changed");
+    }
     const { capture, region } = await source2.captureEvidence(request.displayId, FULL_DISPLAY);
     if (!sameCalibrationSource(probe, capture.frame) || !sameCalibrationSource(probe, region) || capture.frame.capturedAt !== region.capturedAt || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) return { status: "capture-unavailable" };
     const result = region.width === width && region.height === height && region.bgra.byteLength === width * height * 4 ? await analyzeCapture(request, region, capture) : { status: "unsupported-layout", capture };
     const current = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
     if (!sameCalibrationSource(current, capture.frame)) return { status: "capture-unavailable" };
     return result;
-  } catch {
-    return { status: "capture-unavailable" };
+  } catch (error) {
+    const reason = errorReason(error, "capture");
+    progress?.({ kind: "trace", event: { stage: "error", operation, reason, ...errorDetails(error) } });
+    return failure(reason);
   } finally {
     await source2?.close?.().catch(() => {
     });
@@ -3801,6 +4356,7 @@ var DELTA_SPEECH_DEFAULTS = {
 var DELTA_DEFAULTS = {
   enabled: false,
   observer: { enabled: false },
+  standaloneDisplayId: "",
   captureIntervalMs: 1e3,
   calibrationHotkeyEnabled: true,
   gameAspectRatio: DEFAULT_GAME_ASPECT_RATIO,
@@ -4089,8 +4645,15 @@ async function start(message) {
         if (!active) return;
         latest = null;
         lootDetector?.clearVisible();
-        send({ kind: "error", generation, reason: "source-unavailable", message: String(err) });
-        captureTimer = setTimeout(sample, Math.max(1e3, settings.captureIntervalMs));
+        const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
+        if (code === "captureTransportFailed" || code === "captureFailed") {
+          active = false;
+          if (heartbeat) clearInterval(heartbeat);
+          send({ kind: "error", generation, reason: "worker-failed", message: String(err) });
+        } else {
+          send({ kind: "error", generation, reason: "source-unavailable", message: String(err) });
+          captureTimer = setTimeout(sample, Math.max(1e3, settings.captureIntervalMs));
+        }
       }
     })();
   };
@@ -4145,8 +4708,11 @@ process.on("message", (message) => {
     }).catch(() => {
       if (active) send({ kind: "preview", generation, requestId: message.requestId, capture: null });
     });
-  } else if (message.kind === "calibration-suggest" || message.kind === "calibration-source") {
-    void runCalibrationCapture(message).then((result) => {
+  } else if (message.kind === "calibration-suggest" || message.kind === "calibration-source" || message.kind === "calibration-preview" || message.kind === "identity-suggest") {
+    const progress = message.kind === "identity-suggest" && message.identityDebug;
+    void runCalibrationCapture(message, progress ? (event) => {
+      if (process.connected) process.send?.(event);
+    } : void 0).then((result) => {
       if (process.connected) process.send?.(result);
     });
   }

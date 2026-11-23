@@ -3,6 +3,8 @@ import type { WebUi } from 'cortico/web/shared/client-panel.ts';
 import { DEFAULT_GAME_ASPECT_RATIO, DELTA_GAME_ASPECT_RATIOS, type DeltaCalibrationSuggestion, type DeltaGameAspectRatio, type DeltaRoi, type DeltaState } from '../protocol.ts';
 import { configGroupText } from '../i18n/config-groups.ts';
 import { calibrationText } from './strings-calibration.ts';
+import { identityText } from './strings-identity.ts';
+import { calibrationHint, describeControl } from './calibration-help.ts';
 import { calibrationHotkeyText } from './strings-hotkey.ts';
 import { detectionText } from './strings-detection.ts';
 import { lootText } from './strings-loot.ts';
@@ -15,13 +17,17 @@ type Suggestion = Extract<DeltaCalibrationSuggestion, { status: 'ready' | 'inven
 type Failure = Exclude<DeltaCalibrationSuggestion['status'], Suggestion['status']> | 'source-changed' | 'expired' | 'failed';
 type Stage = 'idle' | 'countdown' | 'loading' | Suggestion['status'] | 'saving' | 'saved' | Failure;
 type Hotkey = DeltaState['calibrationHotkey'];
-interface CaptureSource { displayId: string; topologyRevision?: string; gameAspectRatio: DeltaGameAspectRatio }
+interface CaptureSource {
+  displayId: string; topologyRevision?: string; gameAspectRatio: DeltaGameAspectRatio;
+  combat: DeltaState['detection']['config']['calibration']; loot: DeltaState['loot']['config']['calibration'];
+}
 
 interface QuickCalibrationContext {
   ui: WebUi;
   language: Language;
   signal: AbortSignal;
   panel: HTMLElement;
+  identity: HTMLElement;
   screenshots: ScreenshotMenu;
   suggest(signal: AbortSignal): Promise<DeltaCalibrationSuggestion>;
   image(frameId: string, signal: AbortSignal): Promise<Blob>;
@@ -39,12 +45,16 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   const doc = panel.ownerDocument;
   const T = calibrationText(language), H = calibrationHotkeyText(language), D = detectionText(language), L = lootText(language);
   const { outputNumber, capturedAt } = observerText(language);
+  const I = identityText(language);
   const startup = startupText(language);
   const settings = configGroupText(language);
   const formatTime = new Intl.DateTimeFormat(language, {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
   });
   const element = ui.h('div', 'delta-quick-calibration');
+  const area = ui.h('section', 'delta-calibration-area delta-calibration-section');
+  const title = ui.h('h4', 'delta-calibration-title', I.areaTitle);
+  const body = ui.h('div', 'delta-calibration-body');
   const heading = ui.h('div', 'delta-quick-calibration-command');
   const ratio = ui.select({
     options: DELTA_GAME_ASPECT_RATIOS.map((value) => ({ value, label: value })),
@@ -55,9 +65,11 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   const ratioField = ui.h('label', 'delta-game-aspect', settings.gameAspectRatio);
   ratioField.append(ratio);
   const ratioHint = ui.h('p', 'delta-note', settings.gameAspectRatioDescription);
+  describeControl(ratio, ratioHint);
   const ratioError = ui.h('span', 'delta-quick-status bad');
   ratioError.setAttribute('role', 'alert');
-  const start = ui.button(T.start, { size: 'sm', onClick: begin });
+  const start = ui.button(T.start, { variant: 'primary', onClick: begin });
+  start.title = T.prepare;
   start.dataset.calibrationAction = 'suggest';
   start.setAttribute('aria-keyshortcuts', 'Control+Shift+F8');
   const shortcut = ui.h('kbd', 'delta-calibration-shortcut', 'Ctrl+Shift+F8');
@@ -67,7 +79,11 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   heading.append(start, shortcut, shortcutStatus, ratioField, ratioError);
   const status = ui.h('p', 'delta-quick-status');
   status.setAttribute('role', 'status');
-  const instructions = ui.h('p', 'delta-note', T.prepare);
+  const instructions = calibrationHint(ui, start, I.team, 'delta-team-hint');
+  const savedAreas = ui.h('footer', 'delta-saved-areas delta-note');
+  savedAreas.setAttribute('role', 'status');
+  const combatSummary = ui.h('span'), lootSummary = ui.h('span');
+  savedAreas.append(combatSummary, lootSummary);
   const enable = ui.h('p', 'delta-note', T.enable);
   const manual = ui.button(dashboardText(language).calibration, { size: 'sm', onClick: () => {
     if (hotkeyAttemptId || previewFrameId) cancelAttempt();
@@ -124,7 +140,9 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   preview.append(captureCaption, previewSurface, legend, preset);
   const attempt = ui.h('div', 'delta-quick-attempt');
   attempt.append(status, enable, preview, actions);
-  element.append(heading, ratioHint, instructions, attempt);
+  body.append(heading, instructions, ratioHint, attempt);
+  area.append(title, body);
+  element.append(area, ctx.identity, savedAreas);
 
   let stage: Stage = 'idle';
   let allowed = false, blocked = false, ratioBusy = false, expiresAtMs = 0;
@@ -133,6 +151,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   let controller: AbortController | null = null;
   let previewUrl: string | null = null;
   let hotkeyStatus: NonNullable<Hotkey>['status'] | undefined;
+  let shortcutsUnavailable = false;
   let hotkeyAttemptId: string | null = null, ignoredHotkeyAttemptId: string | null = null;
   let hotkeyResultHandled = false;
   let captureSource: CaptureSource | undefined;
@@ -162,7 +181,6 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     manual.hidden = !failed && stage !== 'preparation-only';
     manual.disabled = blocked;
     enable.hidden = stage !== 'saved';
-    instructions.hidden = locked();
     attempt.hidden = stage === 'idle';
     status.classList.toggle('bad', failed);
     status.dataset.calibrationStatus = stage;
@@ -183,16 +201,18 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
       }
     }
   }
-  function updateShortcut(hotkey: Hotkey): void {
-    if (hotkeyStatus === hotkey?.status) return;
-    hotkeyStatus = hotkey?.status;
+  function updateShortcut(hotkey: Hotkey, unavailable: boolean): void {
+    const status = unavailable ? 'unavailable' : hotkey?.status;
+    if (hotkeyStatus === status && shortcutsUnavailable === unavailable) return;
+    hotkeyStatus = status;
+    shortcutsUnavailable = unavailable;
     if (hotkeyStatus) shortcutStatus.dataset.calibrationHotkeyStatus = hotkeyStatus;
     else delete shortcutStatus.dataset.calibrationHotkeyStatus;
     shortcutStatus.textContent = hotkeyStatus ? H[hotkeyStatus] : '';
-    instructions.textContent = hotkeyStatus === 'registered' ? H.prepare : T.prepare;
-    if (hotkeyStatus === 'disabled') start.removeAttribute('aria-keyshortcuts');
+    start.title = hotkeyStatus === 'registered' ? H.prepare : T.prepare;
+    if (unavailable || hotkeyStatus === 'disabled') start.removeAttribute('aria-keyshortcuts');
     else start.setAttribute('aria-keyshortcuts', 'Control+Shift+F8');
-    shortcut.hidden = hotkeyStatus === 'disabled';
+    shortcut.hidden = unavailable || hotkeyStatus === 'disabled';
   }
   function show(next: Stage, message = ''): void {
     stage = next;
@@ -367,7 +387,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
 
   image.addEventListener('error', () => { if (previewFrameId && stage !== 'saving') finish('capture-unavailable'); }, { signal });
   doc.addEventListener('keydown', (event) => {
-    if (start.disabled || hotkeyStatus === 'registered' || hotkeyStatus === 'disabled' || event.defaultPrevented || event.repeat || event.isComposing
+    if (start.disabled || shortcutsUnavailable || hotkeyStatus === 'registered' || hotkeyStatus === 'disabled' || event.defaultPrevented || event.repeat || event.isComposing
       || event.key !== 'F8' || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
     if (!panel.isConnected || doc.hidden || panel.closest('[hidden], [inert], [aria-hidden="true"]')
       || panel.checkVisibility?.({ visibilityProperty: true }) === false) return;
@@ -379,14 +399,25 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   signal.addEventListener('abort', clearAttempt, { once: true });
   drawRegions(null);
   updateControls();
-  return { element, locked, pending, update(enabled: boolean, isBusy: boolean, hotkey?: Hotkey, source?: CaptureSource) {
+  function focusStart(): boolean {
+    if (start.disabled) return false;
+    start.focus();
+    return true;
+  }
+  return { element, locked, pending, focusStart, update(enabled: boolean, isBusy: boolean, hotkey?: Hotkey, source?: CaptureSource, unavailable = false) {
     allowed = enabled;
     blocked = isBusy;
-    updateShortcut(hotkey);
+    updateShortcut(hotkey, unavailable);
     const sourceChanged = source && captureSource && (source.displayId !== captureSource.displayId
       || (source.topologyRevision && captureSource.topologyRevision && source.topologyRevision !== captureSource.topologyRevision));
     const ratioChanged = captureSource && source && captureSource.gameAspectRatio !== source.gameAspectRatio;
     captureSource = source;
+    savedAreas.hidden = !source;
+    const combat = source?.combat ? [I.saved, D.feed, source.combat.personalFeedbackRoi ? T.personal : ''].filter(Boolean).join(' · ') : startup.statuses.missing;
+    const loot = source?.loot ? [I.saved, L.items, L.context].join(' · ') : startup.statuses.missing;
+    const combatStatus = `${startup.combat} · ${combat}`, lootStatus = `${startup.loot} · ${loot}`;
+    if (combatSummary.textContent !== combatStatus) combatSummary.textContent = combatStatus;
+    if (lootSummary.textContent !== lootStatus) lootSummary.textContent = lootStatus;
     if (!ratioBusy) ratio.value = source?.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO;
     if (ratioChanged && (locked() || previewFrameId) && stage !== 'saving') {
       forgetHotkeyAttempt(false);

@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/jpeg-js/lib/encoder.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js
 var require_encoder = __commonJS({
-  "node_modules/jpeg-js/lib/encoder.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js"(exports, module) {
     var btoa = btoa || function(buf) {
       return Buffer.from(buf).toString("base64");
     };
@@ -1105,9 +1105,9 @@ var require_encoder = __commonJS({
   }
 });
 
-// node_modules/jpeg-js/lib/decoder.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js
 var require_decoder = __commonJS({
-  "node_modules/jpeg-js/lib/decoder.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js"(exports, module) {
     var JpegImage = (function jpegImage() {
       "use strict";
       var dctZigZag = new Int32Array([
@@ -2167,9 +2167,9 @@ var require_decoder = __commonJS({
   }
 });
 
-// node_modules/jpeg-js/index.js
+// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js
 var require_jpeg_js = __commonJS({
-  "node_modules/jpeg-js/index.js"(exports, module) {
+  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js"(exports, module) {
     var encode = require_encoder();
     var decode = require_decoder();
     module.exports = {
@@ -2876,6 +2876,9 @@ function configGroupText(language) {
 }
 
 // src/protocol.ts
+function sameDeltaDisplay(a, b) {
+  return a.id === b.id && a.name === b.name && a.primary === b.primary && a.systemNumber === b.systemNumber && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
+}
 var DELTA_GAME_ASPECT_RATIOS = ["16:10", "16:9", "4:3", "5:4", "5:3", "3:2", "21:9", "32:9"];
 var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 function isGameAspectRatio(value) {
@@ -2910,6 +2913,7 @@ var DELTA_SPEECH_DEFAULTS = {
 var DELTA_DEFAULTS = {
   enabled: false,
   observer: { enabled: false },
+  standaloneDisplayId: "",
   captureIntervalMs: 1e3,
   calibrationHotkeyEnabled: true,
   gameAspectRatio: DEFAULT_GAME_ASPECT_RATIO,
@@ -2931,7 +2935,7 @@ function deltaConfigOptions(kind, language) {
   if (kind !== SPEECH_STYLE_OPTIONS) return [];
   return Object.entries(deltaText(language).speechStyles).map(([value, label]) => ({ value, label }));
 }
-function deltaConfigGroups(language = "zh") {
+function deltaConfigGroups(language = "zh", hostControls = true, hotkeyAvailable = hostControls) {
   const t = deltaText(language), labels = configGroupText(language);
   const owner = "world:delta";
   const integer = (title, minimum, maximum) => ({ type: "integer", title, minimum, maximum, "x-hot": true });
@@ -2952,10 +2956,10 @@ function deltaConfigGroups(language = "zh") {
   });
   return [
     group(owner, labels.observation, {
-      "observer.enabled": { type: "boolean", title: t.observer, "x-hot": true },
+      ...hostControls && { "observer.enabled": { type: "boolean", title: t.observer, "x-hot": true } },
       captureIntervalMs: duration(t.captureIntervalMs, 20, 1e4),
       gameAspectRatio: { type: "string", title: labels.gameAspectRatio, description: labels.gameAspectRatioDescription, enum: [...DELTA_GAME_ASPECT_RATIOS], "x-hot": true },
-      calibrationHotkeyEnabled: { type: "boolean", title: labels.hotkey, description: labels.hotkeyDescription, "x-hot": true }
+      ...hotkeyAvailable && { calibrationHotkeyEnabled: { type: "boolean", title: labels.hotkey, description: labels.hotkeyDescription, "x-hot": true } }
     }),
     group(`${owner}.detection`, labels.combat, {
       "detection.enabled": { type: "boolean", title: t.detectionEnabled, "x-hot": true },
@@ -2994,10 +2998,7 @@ function deltaConfigGroups(language = "zh") {
 // src/world.ts
 var import_jpeg_js3 = __toESM(require_jpeg_js(), 1);
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { join as join3 } from "node:path";
-import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
-
-// src/calibration.ts
+import { join as join5 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // src/roi.ts
@@ -3161,7 +3162,7 @@ function calibrationFitsBudget(calibration) {
   return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
 }
 function matchesCalibration(region, calibration) {
-  return region.topologyRevision === calibration.topologyRevision && JSON.stringify(region.display) === JSON.stringify(calibration.display);
+  return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
 function detectionStatus(config) {
   const calibration = config.calibration;
@@ -3272,11 +3273,11 @@ var PRESET = {
   combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
   loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
 };
-function supportsPreparation(source) {
-  return source.display.bounds.width === WIDTH && source.display.bounds.height === HEIGHT;
+function supportsPreparation(source2) {
+  return source2.display.bounds.width === WIDTH && source2.display.bounds.height === HEIGHT;
 }
 function sameCalibrationSource(a, b) {
-  return a.topologyRevision === b.topologyRevision && isDeepStrictEqual(a.display, b.display);
+  return a.topologyRevision === b.topologyRevision && sameDeltaDisplay(a.display, b.display);
 }
 var center = (roi) => ({ x: roi.x + roi.width / 2, y: roi.y + roi.height / 2 });
 var containsCenter = (bounds, box) => {
@@ -3291,7 +3292,7 @@ function projectedRegions(anchors) {
   const heightRatio = anchors.start.height / (24 / HEIGHT * scaleY);
   if (widthRatio < 0.4 || widthRatio > 2.5 || heightRatio < 0.4 || heightRatio > 2.5) return null;
   const offsetX = start.x - 256 / WIDTH * scaleX, offsetY = start.y - 74 / HEIGHT * scaleY;
-  function project(roi2) {
+  function project2(roi2) {
     const left = offsetX + roi2.x * scaleX, top = offsetY + roi2.y * scaleY;
     const width = roi2.width * scaleX, height = roi2.height * scaleY;
     const x = Math.max(0, left), y = Math.max(0, top);
@@ -3299,23 +3300,23 @@ function projectedRegions(anchors) {
     if (!(width > 0 && height > 0 && visibleWidth >= width * 0.95 && visibleHeight >= height * 0.95)) return null;
     return { x, y, width: visibleWidth, height: visibleHeight };
   }
-  const roi = project(PRESET.combat.roi), personalFeedbackRoi = project(PRESET.combat.personalFeedbackRoi);
-  const itemsRoi = project(PRESET.loot.itemsRoi), contextRoi = project(PRESET.loot.contextRoi);
+  const roi = project2(PRESET.combat.roi), personalFeedbackRoi = project2(PRESET.combat.personalFeedbackRoi);
+  const itemsRoi = project2(PRESET.loot.itemsRoi), contextRoi = project2(PRESET.loot.contextRoi);
   return roi && personalFeedbackRoi && itemsRoi && contextRoi ? { combat: { roi, personalFeedbackRoi }, loot: { itemsRoi, contextRoi } } : null;
 }
-function calibrationRegions(source, aspectRatio, combat, loot, anchors) {
+function calibrationRegions(source2, aspectRatio, combat, loot, anchors) {
   let savedCombat = null;
-  if (combat && sameCalibrationSource(source, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio) {
+  if (combat && sameCalibrationSource(source2, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio) {
     try {
       if (calibrationFitsBudget(combat)) savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
     } catch {
     }
   }
-  const savedLoot = loot && sameCalibrationSource(source, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot) ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
-  const native = supportsPreparation(source) && (!anchors || containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions));
+  const savedLoot = loot && sameCalibrationSource(source2, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot) ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
+  const native = supportsPreparation(source2) && (!anchors || containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions));
   const projection = native ? PRESET : anchors && projectedRegions(anchors);
   const combatRegion = savedCombat ?? projection?.combat, lootRegion = savedLoot ?? projection?.loot;
-  if (!combatRegion || !lootRegion || !calibrationFitsBudget({ ...source, ...combatRegion }) || !lootCalibrationFitsBudget({ ...source, ...lootRegion })) return null;
+  if (!combatRegion || !lootRegion || !calibrationFitsBudget({ ...source2, ...combatRegion }) || !lootCalibrationFitsBudget({ ...source2, ...lootRegion })) return null;
   const fallback = native ? "preset" : "estimated";
   return { combat: combatRegion, loot: lootRegion, sources: { combat: savedCombat ? "saved" : fallback, loot: savedLoot ? "saved" : fallback } };
 }
@@ -3441,9 +3442,9 @@ var KnowledgeStore = class {
   read() {
     return { content: this.document.content, state: this.state() };
   }
-  activate(document2, source) {
+  activate(document2, source2) {
     this.document = document2;
-    this.source = source;
+    this.source = source2;
     this.loadedAt = (/* @__PURE__ */ new Date()).toISOString();
     this.lastError = null;
   }
@@ -3490,6 +3491,171 @@ var KnowledgeStore = class {
   }
 };
 
+// src/identity-debug.ts
+import { closeSync, lstatSync, mkdirSync as mkdirSync2, openSync, readdirSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join2, resolve } from "node:path";
+
+// package.json
+var package_default = {
+  name: "cortico-world-delta",
+  version: "1.1.0",
+  description: "\u8BA9 Coo \u53EF\u4EE5\u6309\u56FA\u5B9A\u9891\u7387\u89C2\u5BDF\u4E09\u89D2\u6D32\u7684\u51FB\u6740\u548C\u4FDD\u9669\u7BB1\u3002",
+  license: "AGPL-3.0-or-later",
+  repository: {
+    type: "git",
+    url: "https://github.com/kyrsi/cortico-world-delta.git"
+  },
+  keywords: ["cortico-world", "delta-force", "\u4E09\u89D2\u6D32\u89C2\u5BDF"],
+  type: "module",
+  main: "./dist/index.js",
+  exports: {
+    ".": "./dist/index.js",
+    "./protocol": "./src/protocol.ts"
+  },
+  files: [
+    "src",
+    "scripts",
+    "dist",
+    "knowledge",
+    "documents",
+    "describe.json",
+    "README*.md",
+    "LICENSE"
+  ],
+  engines: { node: ">=22" },
+  os: ["win32"],
+  scripts: {
+    build: "node scripts/build.mjs"
+  },
+  devDependencies: {
+    esbuild: "0.28.2",
+    "jpeg-js": "0.4.4"
+  },
+  cortico: {
+    kind: "world",
+    api: 6,
+    tags: ["game", "external-setup", "sensitive-data"],
+    displayName: "\u4E09\u89D2\u6D32\u89C2\u5BDF",
+    locales: {
+      zh: {
+        displayName: "\u4E09\u89D2\u6D32\u89C2\u5BDF",
+        description: "\u8BA9 Coo \u53EF\u4EE5\u6309\u56FA\u5B9A\u9891\u7387\u89C2\u5BDF\u4E09\u89D2\u6D32\u7684\u51FB\u6740\u548C\u4FDD\u9669\u7BB1\u3002"
+      },
+      en: {
+        displayName: "Game observer",
+        description: "Let Coo check kill notifications and the safe box in Delta Force at regular intervals."
+      }
+    },
+    webUiClient: "dist/console.js",
+    webUiStyle: "dist/console.css",
+    describe: "describe.json"
+  }
+};
+
+// src/identity-debug.ts
+var frameName = /^frame-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.png$/i;
+var IdentityDebugStore = class {
+  constructor(dataDir) {
+    this.dataDir = dataDir;
+    try {
+      const dir = this.directory(false);
+      this.hasLog = this.regularLog(dir);
+      this.pendingFrames = this.frames(dir).length > 0;
+    } catch {
+    }
+  }
+  dataDir;
+  hasLog = false;
+  pendingFrames = false;
+  state() {
+    return { hasLog: this.hasLog, pendingFrames: this.pendingFrames };
+  }
+  directory(create) {
+    if (!this.dataDir) throw new Error("World data directory unavailable");
+    let dir = resolve(this.dataDir);
+    for (const component of ["worlds", "delta", "identity-debug"]) {
+      dir = join2(dir, component);
+      if (create && !lstatSync(dir, { throwIfNoEntry: false })) mkdirSync2(dir, { mode: 448 });
+      if (!lstatSync(dir).isDirectory()) throw new Error("Identity debug directory unavailable");
+    }
+    return dir;
+  }
+  regularLog(dir) {
+    const stat = lstatSync(join2(dir, "attempts.jsonl"), { throwIfNoEntry: false });
+    return !!stat && stat.isFile() && stat.nlink === 1;
+  }
+  frames(dir) {
+    return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && frameName.test(entry.name));
+  }
+  logPath() {
+    const dir = this.directory(false);
+    if (!this.regularLog(dir)) throw new Error("Identity log unavailable");
+    return join2(dir, "attempts.jsonl");
+  }
+  record(attemptId, event) {
+    try {
+      const dir = this.directory(true), path = join2(dir, "attempts.jsonl");
+      const stat = lstatSync(path, { throwIfNoEntry: false });
+      if (stat && (!stat.isFile() || stat.nlink !== 1)) return;
+      const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+      writeFileSync2(
+        path,
+        JSON.stringify({ ...event, version: package_default.version, timestamp, attemptId }) + "\n",
+        { flag: stat ? "a" : "wx", mode: 384 }
+      );
+      this.hasLog = true;
+    } catch {
+    }
+  }
+  writeFrame(attemptId, png) {
+    const name = `frame-${attemptId}.png`;
+    if (!frameName.test(name)) return null;
+    try {
+      const path = join2(this.directory(true), name);
+      const fd = openSync(path, "wx", 384);
+      try {
+        try {
+          writeFileSync2(fd, png);
+        } finally {
+          closeSync(fd);
+        }
+      } catch (error) {
+        unlinkSync2(path);
+        throw error;
+      }
+      this.pendingFrames = true;
+      return name;
+    } catch {
+      return null;
+    }
+  }
+  clearFrames() {
+    try {
+      const dir = this.directory(false);
+      let remaining = false;
+      for (const entry of this.frames(dir)) {
+        try {
+          unlinkSync2(join2(dir, entry.name));
+        } catch {
+          remaining = true;
+        }
+      }
+      this.pendingFrames = remaining;
+    } catch {
+    }
+  }
+};
+
+// src/profile-identity.ts
+var compact = (value) => value.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
+var uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
+var placeholders = /* @__PURE__ */ new Set(["\u533F\u540D\u73A9\u5BB6", "anonymousplayer"]);
+function validIdentityNickname(value) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
+  const name = value.trim();
+  return !placeholders.has(compact(name)) && !uidField.test(name.normalize("NFKC"));
+}
+
 // src/speech.ts
 function validateSpeechConfig(value) {
   if (!value || typeof value !== "object") return false;
@@ -3518,29 +3684,34 @@ function launchEngine(output) {
     stdio: ["ignore", output, output, "ipc"]
   });
 }
-async function runCalibrationOperation(request, signal) {
-  const failure = { status: "capture-unavailable" };
-  if (signal.aborted) return failure;
+async function runCalibrationOperation(request, signal, progress) {
+  const failure = (reason) => ({ status: "capture-unavailable", ...request.kind === "identity-suggest" && { reason } });
+  if (signal.aborted) return failure("cancelled");
   try {
     const child = launchEngine("ignore");
-    return await new Promise((resolve2) => {
+    return await new Promise((resolve3) => {
       let settled = false;
       const finish = (result) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        signal.removeEventListener("abort", unavailable);
+        signal.removeEventListener("abort", cancelled);
         child.kill();
-        resolve2(result);
+        resolve3(result);
       };
-      const unavailable = () => finish(failure);
-      const timer = setTimeout(unavailable, request.kind === "calibration-suggest" ? 25e3 : 5e3);
-      signal.addEventListener("abort", unavailable, { once: true });
-      child.once("message", finish);
+      const unavailable = () => finish(failure("worker-failed"));
+      const cancelled = () => finish(failure("cancelled"));
+      const timer = setTimeout(() => finish(failure("worker-timeout")), request.kind === "calibration-source" ? 5e3 : 25e3);
+      signal.addEventListener("abort", cancelled, { once: true });
+      child.on("message", (message) => {
+        if (settled) return;
+        if ("status" in message) finish(message);
+        else if (request.kind === "identity-suggest") progress?.(message);
+      });
       child.once("error", unavailable);
       child.once("exit", unavailable);
       try {
-        child.send(request, (error) => {
+        child.send({ ...request, identityDebug: request.kind === "identity-suggest" && !!progress }, (error) => {
           if (error) unavailable();
         });
       } catch {
@@ -3548,7 +3719,7 @@ async function runCalibrationOperation(request, signal) {
       }
     });
   } catch {
-    return failure;
+    return failure("worker-failed");
   }
 }
 var DeltaWorker = class {
@@ -3625,11 +3796,11 @@ var DeltaWorker = class {
 // src/screenshot-reveal.ts
 import { spawn } from "node:child_process";
 import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname2, join as join2, resolve } from "node:path";
+import { lstatSync as lstatSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync2, renameSync as renameSync2, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
 function openScreenshotInFolder(filePath) {
   const windows = process.platform === "win32";
-  const command = windows ? join2(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe") : process.platform === "darwin" ? "/usr/bin/open" : "/usr/bin/xdg-open";
+  const command = windows ? join3(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe") : process.platform === "darwin" ? "/usr/bin/open" : "/usr/bin/xdg-open";
   const args = windows ? [`/select,"${filePath}"`] : process.platform === "darwin" ? ["-R", filePath] : [dirname2(filePath)];
   return new Promise((done, fail) => {
     const child = spawn(command, args, { detached: true, stdio: "ignore", windowsVerbatimArguments: windows });
@@ -3641,24 +3812,24 @@ function openScreenshotInFolder(filePath) {
   });
 }
 async function revealCapture(options, capture, part) {
-  const directory = resolve(options.directory);
+  const directory = resolve2(options.directory);
   const stamp = new Date(capture.frame.capturedAt).toISOString().replaceAll(":", "-");
   const bytes = Buffer.from(capture.jpeg.buffer, capture.jpeg.byteOffset, capture.jpeg.byteLength);
   const digest = createHash4("sha256").update(bytes).digest("hex");
-  const filePath = join2(directory, `${stamp}-${part}-${digest}.jpg`);
-  mkdirSync2(directory, { recursive: true, mode: 448 });
-  if (!lstatSync(directory).isDirectory()) throw new Error("Screenshot directory is unavailable");
-  const existing = lstatSync(filePath, { throwIfNoEntry: false });
+  const filePath = join3(directory, `${stamp}-${part}-${digest}.jpg`);
+  mkdirSync3(directory, { recursive: true, mode: 448 });
+  if (!lstatSync2(directory).isDirectory()) throw new Error("Screenshot directory is unavailable");
+  const existing = lstatSync2(filePath, { throwIfNoEntry: false });
   if (existing) {
     if (!existing.isFile() || existing.size !== bytes.byteLength || !bytes.equals(readFileSync2(filePath))) throw new Error("Screenshot file has changed");
   } else {
-    const temporary = join2(directory, `.${randomUUID2()}.tmp`);
+    const temporary = join3(directory, `.${randomUUID2()}.tmp`);
     try {
-      writeFileSync2(temporary, bytes, { flag: "wx", mode: 384 });
+      writeFileSync3(temporary, bytes, { flag: "wx", mode: 384 });
       renameSync2(temporary, filePath);
     } catch (error) {
       try {
-        unlinkSync2(temporary);
+        unlinkSync3(temporary);
       } catch {
       }
       throw error;
@@ -3716,20 +3887,98 @@ function startupCheck(frame, detection, loot) {
   };
 }
 
+// src/standalone-hotkey.ts
+import { spawn as spawn2 } from "node:child_process";
+import { join as join4 } from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+var source = fileURLToPath2(new URL("../src/standalone/CalibrationHotkey.cs", import.meta.url));
+var script2 = "$ErrorActionPreference = 'Stop'\nAdd-Type -TypeDefinition ([IO.File]::ReadAllText($env:DELTA_HOTKEY_SOURCE))\n[DeltaObservation.CalibrationHotkey]::Run()";
+var retiring = Promise.resolve();
+var windowsCalibrationHotkey = {
+  register(onPress, onStatus) {
+    let released = false;
+    let child;
+    let exited;
+    void retiring.then(() => {
+      if (released) return;
+      const command = join4(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      const helper = spawn2(command, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script2], {
+        windowsHide: true,
+        env: { ...process.env, DELTA_HOTKEY_SOURCE: source },
+        stdio: ["pipe", "pipe", "pipe"]
+      });
+      child = helper;
+      let occupied = false;
+      const startup = setTimeout(() => helper.kill(), 12e3);
+      helper.stderr.resume();
+      helper.stdin.on("error", () => {
+      });
+      helper.on("error", () => {
+      });
+      const lines = createInterface({ input: helper.stdout });
+      lines.on("line", (line) => {
+        if (released) return;
+        if (line === "pressed") {
+          onPress();
+          return;
+        }
+        if (line === "registered" || line === "occupied" || line === "unavailable") {
+          clearTimeout(startup);
+          occupied = line === "occupied";
+          onStatus(line);
+        }
+      });
+      exited = new Promise((resolve3) => helper.once("close", () => {
+        clearTimeout(startup);
+        child = void 0;
+        if (!released && !occupied) onStatus("unavailable");
+        resolve3();
+      }));
+    }).catch(() => {
+      if (!released) onStatus("unavailable");
+    });
+    return () => {
+      released = true;
+      if (!child) return;
+      const helper = child;
+      retiring = exited;
+      helper.stdin.end();
+      const force = setTimeout(() => helper.kill(), 1e3);
+      void exited.then(() => clearTimeout(force));
+    };
+  }
+};
+
 // src/world.ts
 var HOTKEY_REPEAT_MS = 750;
+var CALIBRATION_GRANT_MS = 6e5;
+var standaloneModule = new URL(import.meta.url.endsWith(".ts") ? "./standalone-capture.ts" : "./standalone-capture.js", import.meta.url).href;
+var windowsCapture = {
+  frameSourceModule: standaloneModule,
+  calibrationHotkey: windowsCalibrationHotkey,
+  async listDisplays() {
+    return (await import(standaloneModule)).listDisplays();
+  }
+};
 var DeltaWorld = class {
   constructor(options) {
     this.options = options;
     this.binding = options.binding;
     this.knowledge = new KnowledgeStore(options.dataDir);
-    const directory = options.screenshotReveal?.directory ?? (options.dataDir ? join3(options.dataDir, "worlds", this.id, "screenshots") : null);
+    this.identityDebug = new IdentityDebugStore(options.dataDir);
+    this.standalone = options.standalone ?? (process.platform === "win32" ? windowsCapture : void 0);
+    const directory = options.screenshotReveal?.directory ?? (options.dataDir ? join5(options.dataDir, "worlds", this.id, "screenshots") : null);
     this.screenshotReveal = directory ? { directory, open: options.screenshotReveal?.open ?? openScreenshotInFolder } : null;
   }
   options;
   id = "delta";
   host = null;
   binding;
+  standalone;
+  grantedDisplayId = null;
+  pendingGrant = null;
+  calibrationGrant = null;
   unsubscribe = null;
   timer = null;
   worker = null;
@@ -3767,6 +4016,8 @@ var DeltaWorld = class {
   calibrationHotkeyAttempt = null;
   calibrationLastPressMs = -Infinity;
   knowledge;
+  identityDebug;
+  identitySaveRevision = 0;
   screenshotReveal;
   lastSelectedAtMs = null;
   lastActivityAtMs = null;
@@ -3801,7 +4052,6 @@ var DeltaWorld = class {
     this.host = host;
     this.lastSelectedAtMs = null;
     this.lastActivityAtMs = null;
-    this.intent = this.options.cfg.observer.enabled ? "running" : "stopped";
     this.bindProduct(this.binding);
     this.timer = setInterval(() => this.reconcile(), DELTA_CONTROL_INTERVAL_MS);
     this.timer.unref();
@@ -3809,6 +4059,9 @@ var DeltaWorld = class {
   }
   async stop() {
     this.host = null;
+    this.pendingGrant = null;
+    this.calibrationGrant = null;
+    this.grantedDisplayId = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.unsubscribe?.();
@@ -3829,6 +4082,10 @@ var DeltaWorld = class {
     this.releaseCalibrationHotkey();
     this.clearCalibration();
     this.binding = binding;
+    this.pendingGrant = null;
+    this.calibrationGrant = null;
+    this.grantedDisplayId = null;
+    this.intent = binding && this.options.cfg.observer.enabled ? "running" : "stopped";
     this.policyKey = null;
     this.calibrationPolicyKey = null;
     this.invalidate("policy-changed");
@@ -3836,20 +4093,30 @@ var DeltaWorld = class {
     this.reconcile();
   }
   snapshot() {
-    return this.binding?.snapshot() ?? null;
+    if (this.binding) return this.binding.snapshot();
+    if (!this.standalone) return null;
+    const displayId = this.options.cfg.standaloneDisplayId ?? "";
+    return {
+      revision: displayId,
+      displayId,
+      viewEnabled: true,
+      observationEnabled: true,
+      viewPermitted: this.grantedDisplayId !== null && this.grantedDisplayId === displayId
+    };
   }
   frameSourceModule() {
+    if (!this.binding && this.standalone) return this.standalone.frameSourceModule;
     return this.options.frameSourceModule ?? this.binding?.frameSourceModule ?? "cortico-world-desktop-pet/capture";
   }
   blocked(snapshot) {
     if (!snapshot) return "unbound";
     if (!snapshot.viewEnabled) return "view-disabled";
     if (!snapshot.observationEnabled) return "observation-disabled";
-    if (!snapshot.viewPermitted) return "view-permission";
+    if (this.binding && !snapshot.viewPermitted) return "view-permission";
     if (snapshot.corePaused) return "core-paused";
-    if (!snapshot.outputAvailable) return "no-output";
+    if (snapshot.outputAvailable === false) return "no-output";
     if (!this.host?.modelFacts.accepts("image/jpeg")) return "no-image-model";
-    return null;
+    return snapshot.viewPermitted ? null : "view-permission";
   }
   reconcile() {
     if (!this.host) return;
@@ -3858,11 +4125,21 @@ var DeltaWorld = class {
     if (this.calibrationPreview && this.calibrationPreview.expiresAtMs <= now) this.calibrationPreview = null;
     if (this.calibrationHotkeyAttempt && this.calibrationHotkeyAttempt.expiresAtMs <= now) this.clearCalibrationHotkeyAttempt();
     const cfg = this.options.cfg;
-    if (!cfg.enabled || !cfg.observer.enabled && this.intent === "running") this.intent = "stopped";
-    else if (cfg.observer.enabled && this.intent !== "running") this.intent = "running";
+    if (this.calibrationGrant && (!cfg.enabled || now >= this.calibrationGrant.expiresAt || this.calibrationGrant.displayId !== cfg.standaloneDisplayId)) this.revokeCalibrationGrant();
+    if (!cfg.enabled) {
+      this.pendingGrant = null;
+      this.grantedDisplayId = null;
+      this.intent = "stopped";
+    } else if (this.binding) {
+      if (cfg.observer.enabled) this.intent = "running";
+      else if (this.intent === "running") this.intent = "stopped";
+    } else if (this.grantedDisplayId !== null && this.grantedDisplayId !== cfg.standaloneDisplayId) {
+      this.grantedDisplayId = null;
+      this.intent = "stopped";
+    }
     const snapshot = this.snapshot();
     const loot = this.lootConfig();
-    const calibrationKey = JSON.stringify([snapshot, cfg.enabled, cfg.detection.calibration, loot.calibration, this.gameAspectRatio()]);
+    const calibrationKey = JSON.stringify([snapshot, cfg.enabled, cfg.detection.language, cfg.detection.calibration, loot.calibration, this.gameAspectRatio()]);
     if (this.calibrationPolicyKey !== null && calibrationKey !== this.calibrationPolicyKey) this.clearCalibration();
     this.calibrationPolicyKey = calibrationKey;
     const key = JSON.stringify([snapshot, cfg.enabled, cfg.captureIntervalMs, cfg.worker, cfg.detection, loot]);
@@ -4230,10 +4507,14 @@ var DeltaWorld = class {
       reason: this.reason,
       startBlockedReason: blocked,
       bound: !!snapshot,
+      captureMode: this.binding ? "host" : this.standalone ? "standalone" : "unsupported",
+      standaloneGranted: this.grantedDisplayId !== null,
+      calibrationDisplayId: this.calibrationGrant?.displayId ?? null,
       source: this.frame?.display ?? null,
       configuredDisplayId: snapshot?.displayId ?? "",
       calibrationHotkey: this.calibrationHotkeyState(snapshot),
       gameAspectRatio: this.gameAspectRatio(),
+      identityDebug: this.identityDebug.state(),
       worker: { pid: this.worker?.pid ?? null, heartbeatAt: this.worker?.heartbeatAt ?? null, restarts: this.restarts, captures: this.captures },
       pending: this.pending.length,
       events: this.events,
@@ -4247,9 +4528,9 @@ var DeltaWorld = class {
       },
       knowledge: this.knowledge.state(),
       actions: {
-        start: !!this.host && !!this.options.cfg.enabled && !blocked && (this.intent !== "running" || this.exhausted),
+        start: !!this.binding && !!this.host && !!this.options.cfg.enabled && !blocked && (this.intent !== "running" || this.exhausted),
         pause: this.intent === "running",
-        stop: this.intent !== "stopped",
+        stop: this.intent !== "stopped" || this.pendingGrant !== null || this.calibrationGrant !== null,
         simulate: this.phase === "running" && this.worker !== null && this.frame !== null && !blocked
       }
     });
@@ -4259,8 +4540,46 @@ var DeltaWorld = class {
     this.expire();
     return this.stateSnapshot();
   }
+  async listStandaloneDisplays(unavailable) {
+    if (!this.host || !this.options.cfg.enabled || this.binding || !this.standalone) throw new Error(unavailable);
+    return this.standalone.listDisplays();
+  }
+  revokeCalibrationGrant() {
+    if (this.pendingGrant?.calibrationOnly) this.pendingGrant = null;
+    if (!this.calibrationGrant) return;
+    this.calibrationGrant = null;
+    this.clearCalibration();
+    this.preview = null;
+  }
+  async authorizeStandalone(displayId, calibrationOnly, unavailable) {
+    if (calibrationOnly && this.intent === "running") throw new Error(unavailable);
+    const request = { calibrationOnly };
+    this.pendingGrant = request;
+    try {
+      const displays = await this.listStandaloneDisplays(unavailable);
+      if (this.pendingGrant !== request || !this.host || !this.options.cfg.enabled || !calibrationOnly && !this.host.modelFacts.accepts("image/jpeg") || !displays.some((display) => display.id === displayId)) throw new Error(unavailable);
+      if (this.options.cfg.standaloneDisplayId !== displayId) this.options.persist({ standaloneDisplayId: displayId });
+      this.clearCalibration();
+      this.preview = null;
+      if (calibrationOnly) {
+        this.calibrationGrant = { displayId, expiresAt: Date.now() + CALIBRATION_GRANT_MS };
+        return this.state();
+      }
+      this.calibrationGrant = null;
+      this.grantedDisplayId = displayId;
+      return await this.setIntent("running", unavailable);
+    } finally {
+      if (this.pendingGrant === request) this.pendingGrant = null;
+    }
+  }
   async setIntent(intent, unavailable) {
     if (intent === "running" && (!this.host || !this.options.cfg.enabled || this.blocked(this.snapshot()))) throw new Error(unavailable);
+    if (intent !== "running" && !this.binding) {
+      this.pendingGrant = null;
+      this.calibrationGrant = null;
+      this.grantedDisplayId = null;
+      this.clearCalibration();
+    }
     this.invalidate("policy-changed");
     this.intent = intent;
     this.exhausted = false;
@@ -4269,7 +4588,7 @@ var DeltaWorld = class {
       this.restarts = 0;
       this.captures = 0;
     }
-    this.options.persist({ observer: { enabled: intent === "running" } });
+    if (this.binding) this.options.persist({ observer: { enabled: intent === "running" } });
     this.reconcile();
     if (intent !== "running") await Promise.all(this.stopping);
     return this.state();
@@ -4279,17 +4598,24 @@ var DeltaWorld = class {
     if (this.phase !== "running" || this.blocked(this.snapshot()) || !this.worker) throw new Error(unavailable);
     if (this.simulations.size >= this.options.cfg.events.maxPending) return Promise.resolve({ accepted: false, reason: "overflow", eventId: null, state: this.stateSnapshot() });
     const requestId = ++this.requestSequence, id = randomUUID3();
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const timer = setTimeout(() => {
         this.simulations.delete(requestId);
-        resolve2({ accepted: false, reason: "worker-failed", eventId: null, state: this.stateSnapshot() });
+        resolve3({ accepted: false, reason: "worker-failed", eventId: null, state: this.stateSnapshot() });
       }, 5e3);
-      this.simulations.set(requestId, { id, timer, resolve: resolve2 });
+      this.simulations.set(requestId, { id, timer, resolve: resolve3 });
       this.worker.send({ kind: "simulate", requestId, eventId: id, eventKind: request.kind, dedupKey: request.dedupKey ?? id });
     });
   }
   async detectionPreview(unavailable) {
     this.reconcile();
+    if (this.intent !== "running") {
+      const policy = this.calibrationPolicy();
+      if (!policy || this.calibrationRequest) throw new Error(unavailable);
+      const result = await this.calibrationCapture("calibration-preview", policy);
+      if (result.status !== "manual-preview" || this.calibrationPolicy()?.revision !== policy.revision || (policy.displayId ? result.capture.frame.display.id !== policy.displayId : !result.capture.frame.display.primary)) throw new Error(unavailable);
+      return this.storeManualPreview(result.capture, unavailable, policy.revision);
+    }
     const deadline = Date.now() + 5e3;
     while (this.intent === "running" && this.phase === "starting" && !this.blocked(this.snapshot()) && Date.now() < deadline) {
       await new Promise((done) => setTimeout(done, 20));
@@ -4297,35 +4623,52 @@ var DeltaWorld = class {
     }
     if (this.phase !== "running" || !this.worker || this.blocked(this.snapshot()) || this.previewRequests.size) throw new Error(unavailable);
     const generation = this.generation, aspectRatio = this.gameAspectRatio(), requestId = ++this.requestSequence;
-    const capture = await new Promise((resolve2) => {
+    const capture = await new Promise((resolve3) => {
       const timer = setTimeout(() => {
         this.previewRequests.delete(requestId);
-        resolve2(null);
+        resolve3(null);
       }, 5e3);
-      this.previewRequests.set(requestId, { resolve: resolve2, timer });
+      this.previewRequests.set(requestId, { resolve: resolve3, timer });
       this.worker.send({ kind: "preview", requestId });
     });
     this.reconcile();
     if (!capture || generation !== this.generation || aspectRatio !== this.gameAspectRatio() || this.phase !== "running" || this.blocked(this.snapshot()) || !this.frame || !matchesCalibration(capture.frame, { display: this.frame.display, topologyRevision: this.frame.topologyRevision, roi: { x: 0, y: 0, width: 1, height: 1 } }) || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) throw new Error(unavailable);
+    return this.storeManualPreview(capture, unavailable);
+  }
+  storeManualPreview(capture, unavailable, calibrationRevision) {
+    if (!capture.jpeg.byteLength || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) throw new Error(unavailable);
     const decoded = import_jpeg_js3.default.decode(capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
     if (decoded.width !== capture.frame.width || decoded.height !== capture.frame.height) throw new Error(unavailable);
-    this.preview = { capture, generation, aspectRatio, expiresAtMs: Date.now() + 3e4 };
+    this.preview = { capture, generation: this.generation, aspectRatio: this.gameAspectRatio(), calibrationRevision, expiresAtMs: Date.now() + 3e4 };
     return structuredClone(capture.frame);
   }
   validPreview(frameId) {
     this.reconcile();
     const preview = this.preview;
-    return typeof frameId === "string" && preview && preview.capture.frame.frameId === frameId && preview.generation === this.generation && preview.expiresAtMs > Date.now() && this.phase === "running" && !this.blocked(this.snapshot()) ? preview.capture : null;
+    if (!preview || preview.capture.frame.frameId !== frameId || preview.generation !== this.generation || preview.expiresAtMs <= Date.now()) return null;
+    const permitted = preview.calibrationRevision === void 0 ? this.phase === "running" && !this.blocked(this.snapshot()) : this.calibrationPolicy()?.revision === preview.calibrationRevision;
+    return permitted ? preview.capture : null;
+  }
+  async previewForSave(frameId) {
+    const capture = this.validPreview(frameId);
+    if (!capture || this.preview?.calibrationRevision === void 0) return capture;
+    const policy = this.calibrationPolicy();
+    if (!policy || this.calibrationRequest) return null;
+    const result = await this.calibrationCapture("calibration-source", policy);
+    return result.status === "source" && sameCalibrationSource(result.source, capture.frame) && this.validPreview(frameId) === capture ? capture : null;
   }
   calibrationPolicy(snapshot = this.snapshot()) {
-    return this.host && this.options.cfg.enabled && snapshot?.viewEnabled && snapshot.observationEnabled && snapshot.viewPermitted ? snapshot : null;
+    if (!this.host || !this.options.cfg.enabled || !snapshot?.viewEnabled || !snapshot.observationEnabled) return null;
+    if (snapshot.viewPermitted) return snapshot;
+    const grant = this.calibrationGrant;
+    return !this.binding && grant && grant.displayId === snapshot.displayId && grant.expiresAt > Date.now() ? { ...snapshot, viewPermitted: true } : null;
   }
   gameAspectRatio() {
     const ratio = this.options.cfg.gameAspectRatio;
     return isGameAspectRatio(ratio) ? ratio : DEFAULT_GAME_ASPECT_RATIO;
   }
   calibrationHotkeyState(snapshot) {
-    const status = this.options.cfg.calibrationHotkeyEnabled === false ? "disabled" : !this.calibrationPolicy(snapshot) ? "blocked" : this.calibrationHotkeyLease?.status ?? "unavailable";
+    const status = !this.binding && !this.standalone ? "unavailable" : this.options.cfg.calibrationHotkeyEnabled === false ? "disabled" : !snapshot?.viewPermitted || !this.calibrationPolicy(snapshot) ? "blocked" : this.calibrationHotkeyLease?.status ?? "unavailable";
     const attempt = this.calibrationHotkeyAttempt;
     return { status, attempt: attempt && { id: attempt.id, result: attempt.result } };
   }
@@ -4349,8 +4692,8 @@ var DeltaWorld = class {
     lease?.release?.();
   }
   reconcileCalibrationHotkey(snapshot) {
-    const port = this.binding?.calibrationHotkey;
-    if (!port || this.options.cfg.calibrationHotkeyEnabled === false || !this.calibrationPolicy(snapshot)) {
+    const port = this.binding ? this.binding.calibrationHotkey : this.standalone?.calibrationHotkey;
+    if (!port || this.options.cfg.calibrationHotkeyEnabled === false || !snapshot?.viewPermitted || !this.calibrationPolicy(snapshot)) {
       if (this.calibrationHotkeyLease) this.releaseCalibrationHotkey();
       return;
     }
@@ -4382,25 +4725,71 @@ var DeltaWorld = class {
     attempt.result = result;
     attempt.expiresAtMs = result.expiresAt ? Date.parse(result.expiresAt) : Date.now() + CALIBRATION_PREVIEW_MS;
   }
-  async calibrationCapture(kind, snapshot, attemptId) {
+  identityLanguage() {
+    return this.options.cfg.detection.language || this.lootConfig().language || "zh-CN";
+  }
+  async calibrationCapture(kind, snapshot, attemptId, progress) {
     const controller = new AbortController();
-    this.calibrationRequest = { controller, attemptId };
+    this.calibrationRequest = { controller, attemptId, kind };
+    const aspect = this.gameAspectRatio();
+    const current = () => {
+      const policy = this.calibrationPolicy();
+      return this.calibrationRequest?.controller === controller && !controller.signal.aborted && policy?.revision === snapshot.revision && policy.displayId === snapshot.displayId && this.gameAspectRatio() === aspect;
+    };
     try {
       const operation = this.options.calibrationOperation ?? runCalibrationOperation;
-      const result = await operation({
-        kind,
-        displayId: snapshot.displayId,
-        frameSourceModule: this.frameSourceModule(),
-        gameAspectRatio: this.gameAspectRatio(),
-        language: this.lootConfig().language || this.options.cfg.detection.language || "zh-CN"
-      }, controller.signal);
+      const result = await operation(
+        {
+          kind,
+          displayId: snapshot.displayId,
+          frameSourceModule: this.frameSourceModule(),
+          gameAspectRatio: aspect,
+          language: kind === "identity-suggest" ? this.identityLanguage() : this.lootConfig().language || this.options.cfg.detection.language || "zh-CN"
+        },
+        controller.signal,
+        progress ? (event) => {
+          if (current()) progress(event);
+        } : void 0
+      );
       this.reconcile();
-      if (!controller.signal.aborted && this.calibrationPolicy()?.revision === snapshot.revision) return result;
+      if (current()) return result;
     } catch {
+      if (current()) return { status: "capture-unavailable", reason: "worker-exception" };
     } finally {
       this.calibrationRequest = null;
     }
-    return { status: "capture-unavailable" };
+    return { status: "capture-unavailable", reason: controller.signal.reason === "id-saved" ? "id-saved" : this.host && !this.calibrationPolicy() ? "permission-revoked" : "cancelled" };
+  }
+  async identitySuggest() {
+    this.reconcile();
+    const attemptId = randomUUID3(), started = Date.now(), saved = this.identitySaveRevision;
+    const snapshot = this.calibrationPolicy(), store = this.identityDebug;
+    let screenshot = null, recognitionReason;
+    const record = (event) => store.record(attemptId, event);
+    record({ stage: "start", displayId: this.snapshot()?.displayId ?? null, aspectRatio: this.gameAspectRatio(), language: this.identityLanguage() });
+    const progress = (update) => {
+      if (update.kind === "frame") {
+        if (snapshot?.displayId && update.displayId !== snapshot.displayId) return;
+        const { kind: _kind, png, ...details } = update;
+        screenshot = store.writeFrame(attemptId, png);
+        record({ stage: "frame", ...details, screenshot, ...screenshot ? {} : { reason: "frame-write-failed" } });
+      } else if (update.event.stage === "finish") {
+        recognitionReason = update.event.reason;
+        record({ ...update.event, stage: "recognition-finish" });
+      } else record(update.event);
+    };
+    let result;
+    if (!snapshot) result = { status: "capture-unavailable", reason: "permission-denied" };
+    else if (this.calibrationRequest) result = { status: "capture-unavailable", reason: "busy" };
+    else result = await this.calibrationCapture("identity-suggest", snapshot, attemptId, this.options.dataDir ? progress : void 0);
+    if (saved !== this.identitySaveRevision) {
+      result = { status: "capture-unavailable", reason: "id-saved" };
+      screenshot = null;
+    }
+    const suggestion = result.status === "identity" ? result.suggestion : { status: "capture-unavailable" };
+    const reason = "reason" in result && result.reason || recognitionReason || (result.status === "identity" ? suggestion.status : result.status);
+    record({ stage: "finish", status: suggestion.status, reason, screenshot, elapsedMs: Date.now() - started });
+    return { ...suggestion, attemptId, reason, screenshot };
   }
   async calibrationSuggest(attemptId) {
     this.reconcile();
@@ -4410,7 +4799,7 @@ var DeltaWorld = class {
     this.calibrationPreview = null;
     const result = await this.calibrationCapture("calibration-suggest", snapshot, attemptId);
     if (attemptId !== void 0 && this.calibrationHotkeyAttempt?.id !== attemptId) return { status: "capture-unavailable" };
-    if (result.status === "source" || result.status === "capture-unavailable") return { status: "capture-unavailable" };
+    if (result.status === "source" || result.status === "identity" || result.status === "manual-preview" || result.status === "capture-unavailable") return { status: "capture-unavailable" };
     const { capture } = result;
     if (!capture) return result.status === "ready" || result.status === "inventory-ready" ? { status: "capture-unavailable" } : { status: result.status };
     const { frame } = capture;
@@ -4435,8 +4824,10 @@ var DeltaWorld = class {
     if (result.status !== "ready") return structuredClone({ status: result.status, frame, expiresAt });
     const regions = calibrationRegions(frame, this.gameAspectRatio(), this.options.cfg.detection.calibration, this.lootConfig().calibration, result.anchors);
     if (!regions) return result.anchors ? structuredClone({ status: "preparation-only", anchors: result.anchors, frame, expiresAt }) : structuredClone({ status: "unsupported-layout", frame, expiresAt });
-    this.calibrationPreview.regions = structuredClone(regions);
-    return structuredClone({ status: "ready", frame, nickname: null, expiresAt, ...result.anchors && { anchors: result.anchors }, ...regions });
+    const combat = this.options.cfg.detection.language === "en-US" ? { roi: regions.combat.roi, personalFeedbackRoi: null } : regions.combat;
+    const suggestion = { ...regions, combat };
+    this.calibrationPreview.regions = structuredClone(suggestion);
+    return structuredClone({ status: "ready", frame, nickname: null, expiresAt, ...result.anchors && { anchors: result.anchors }, ...suggestion });
   }
   validCalibrationPreview(frameId) {
     this.reconcile();
@@ -4457,7 +4848,7 @@ var DeltaWorld = class {
     const snapshot = this.calibrationPolicy(), preview = this.validCalibrationPreview(request.frameId);
     if (!snapshot || !preview?.regions || this.calibrationRequest) throw new Error(unavailable);
     const { regions } = preview;
-    if (request.combat !== void 0 && !isDeepStrictEqual2(request.combat, regions.combat) || request.loot !== void 0 && !isDeepStrictEqual2(request.loot, regions.loot)) throw new Error(invalidRequest);
+    if (request.combat !== void 0 && !isDeepStrictEqual(request.combat, regions.combat) || request.loot !== void 0 && !isDeepStrictEqual(request.loot, regions.loot)) throw new Error(invalidRequest);
     const result = await this.calibrationCapture("calibration-source", snapshot, preview.attemptId);
     const { frame } = preview.capture;
     if (result.status !== "source" || !sameCalibrationSource(result.source, frame) || this.validCalibrationPreview(request.frameId) !== preview) {
@@ -4467,10 +4858,10 @@ var DeltaWorld = class {
       }
       throw new Error(unavailable);
     }
-    const source = { display: frame.display, topologyRevision: frame.topologyRevision, gameAspectRatio: this.gameAspectRatio() };
+    const source2 = { display: frame.display, topologyRevision: frame.topologyRevision, gameAspectRatio: this.gameAspectRatio() };
     this.options.persist({
-      ...regions.combat && { detection: { calibration: { ...source, ...regions.combat } } },
-      ...regions.loot && { loot: { calibration: { ...source, ...regions.loot } } }
+      ...regions.combat && { detection: { calibration: { ...source2, ...regions.combat } } },
+      ...regions.loot && { loot: { calibration: { ...source2, ...regions.loot } } }
     });
     this.calibrationPreview = null;
     if (preview.attemptId) this.clearCalibrationHotkeyAttempt();
@@ -4481,9 +4872,31 @@ var DeltaWorld = class {
     return {
       label: t.title,
       panels: [{ id: "observer", title: t.panel }],
-      config: deltaConfigGroups(language),
+      config: deltaConfigGroups(language, !!this.binding, !!this.binding || process.platform === "win32"),
       invoke: async (panel, method, args) => {
         if (panel !== "observer") throw new Error(t.errors.unknownMethod);
+        if (method === "identitySuggest") {
+          if (args.length) throw new Error(t.errors.invalidRequest);
+          return this.identitySuggest();
+        }
+        if (method === "identityDebugReveal") {
+          if (args.length) throw new Error(t.errors.invalidRequest);
+          if (!this.screenshotReveal) throw new Error(t.errors.unavailable);
+          try {
+            await this.screenshotReveal.open(this.identityDebug.logPath());
+          } catch {
+            throw new Error(t.errors.unavailable);
+          }
+          return { ok: true };
+        }
+        if (method === "identitySave") {
+          if (args.length !== 1 || !validIdentityNickname(args[0])) throw new Error(t.errors.invalidRequest);
+          this.options.persist({ detection: { nickname: args[0].trim() } });
+          this.identitySaveRevision++;
+          if (this.calibrationRequest?.kind === "identity-suggest") this.calibrationRequest.controller.abort("id-saved");
+          this.identityDebug.clearFrames();
+          return this.state();
+        }
         if (method === "calibrationAspectRatioConfigure") {
           if (args.length !== 1 || !isGameAspectRatio(args[0])) throw new Error(t.errors.invalidRequest);
           this.options.persist({ gameAspectRatio: args[0] });
@@ -4525,9 +4938,33 @@ var DeltaWorld = class {
           }
           return this.state();
         }
+        if (method === "listStandaloneDisplays") {
+          if (args.length) throw new Error(t.errors.invalidRequest);
+          return this.listStandaloneDisplays(t.errors.unavailable);
+        }
+        if (method === "startStandalone" || method === "prepareCalibration") {
+          const displayId = args[0];
+          if (args.length !== 1 || typeof displayId !== "string" || !displayId.trim() || displayId.length > 1024) throw new Error(t.errors.invalidRequest);
+          return this.authorizeStandalone(displayId, method === "prepareCalibration", t.errors.unavailable);
+        }
+        if (method === "cancelCalibration") {
+          if (args.length) throw new Error(t.errors.invalidRequest);
+          this.revokeCalibrationGrant();
+          return this.state();
+        }
+        if (method === "quickSetupConfigure") {
+          const request = args[0];
+          if (args.length !== 1 || !request || typeof request.combat !== "boolean" || typeof request.loot !== "boolean" || !(request.combat || request.loot) || !["zh-CN", "en-US"].includes(request.language)) throw new Error(t.errors.invalidRequest);
+          this.options.persist({
+            detection: { enabled: request.combat, ...request.combat && { language: request.language } },
+            loot: { enabled: request.loot, ...request.loot && { language: request.language } }
+          });
+          return this.state();
+        }
         if (["state", "start", "pause", "stop"].includes(method)) {
           if (args.length) throw new Error(t.errors.invalidRequest);
           if (method === "state") return this.state();
+          if (method === "start" && !this.binding) throw new Error(t.errors.unavailable);
           return this.setIntent(method === "start" ? "running" : method === "pause" ? "paused" : "stopped", t.errors.unavailable);
         }
         if (method === "detectionConfigure") {
@@ -4545,7 +4982,7 @@ var DeltaWorld = class {
           return this.state();
         }
         if (method === "lootCalibrate") {
-          const preview = this.validPreview(args[0]), itemsRoi = args[1], contextRoi = args[2];
+          const preview = await this.previewForSave(args[0]), itemsRoi = args[1], contextRoi = args[2];
           if (args.length !== 3 || !preview || !itemsRoi || !contextRoi) throw new Error(t.errors.invalidRequest);
           const calibration = { display: preview.frame.display, topologyRevision: preview.frame.topologyRevision, gameAspectRatio: this.gameAspectRatio(), itemsRoi, contextRoi };
           if (!lootCalibrationFitsBudget(calibration)) throw new Error(t.errors.invalidRequest);
@@ -4594,7 +5031,7 @@ var DeltaWorld = class {
           return {};
         }
         if (method === "detectionCalibrate") {
-          const roi = args[1], personalFeedbackRoi = args[2], preview = this.validPreview(args[0]);
+          const roi = args[1], personalFeedbackRoi = args[2], preview = await this.previewForSave(args[0]);
           if (args.length !== 2 && args.length !== 3 || !preview || !roi || personalFeedbackRoi !== void 0 && personalFeedbackRoi !== null && typeof personalFeedbackRoi !== "object") throw new Error(t.errors.invalidRequest);
           const calibration = {
             display: preview.frame.display,

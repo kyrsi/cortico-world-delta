@@ -3,14 +3,19 @@ import type { CuaDisplay, CuaFrame } from 'cortico-world-desktop-pet';
 import type { Language } from 'cortico/core/language.ts';
 import type { WebUi } from 'cortico/web/shared/client-panel.ts';
 import type { DeltaEvent, DeltaGameLanguage, DeltaKind, DeltaLootSensitivity, DeltaPanelMethods, DeltaRoi, DeltaSpeechConfig, DeltaState } from '../protocol.ts';
-import { DEFAULT_GAME_ASPECT_RATIO } from '../protocol.ts';
+import { DEFAULT_GAME_ASPECT_RATIO, sameDeltaDisplay } from '../protocol.ts';
 import { observerText } from './strings.ts';
 import { detectionText } from './strings-detection.ts';
 import { lootText } from './strings-loot.ts';
 import { startupText } from './strings-startup.ts';
 import { companionText } from './strings-companion.ts';
 import { dashboardText } from './strings-dashboard.ts';
+import { captureText } from './strings-capture.ts';
+import { captureSourcePicker } from './capture-source.ts';
 import { quickCalibrationView } from './quick-calibration.ts';
+import { quickSetup, setupIssues, type SetupField } from './quick-setup.ts';
+import { setupText } from './strings-setup.ts';
+import { identityCalibration } from './identity-calibration.ts';
 import { screenshotMenu } from './screenshot-menu.ts';
 import { deltaText } from '../i18n/index.ts';
 import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_CONTEXT_PIXELS, DELTA_MAX_LOOT_ROI_AREA, DELTA_KNOWLEDGE_MAX_BYTES } from '../limits.ts';
@@ -47,6 +52,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   const C = startupText(ctx.language);
   const P = companionText(ctx.language);
   const V = dashboardText(ctx.language);
+  const Q = setupText(ctx.language);
+  const captureLabels = captureText(ctx.language);
   const errors = deltaText(ctx.language).errors;
   const makeRow: Row = row ?? ((label, control) => {
     const element = ui.h('div', 'delta-row');
@@ -58,6 +65,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   let state: DeltaState | null = null;
   let availability: 'loading' | 'active' | 'inactive' | 'unavailable' = 'loading';
   let polling = false, busy = false, generation = 0, stateRead = 0, appliedRead = 0;
+  let pendingGrant = false;
+  let choosingObservationScreen = false, preparingScreen = false;
   let configDirty = false, lootConfigDirty = false, speechConfigDirty = false;
   let calibrationFrame: CuaFrame | null = null, calibrationRoi: DeltaRoi | null = null;
   let personalFeedbackRoi: DeltaRoi | null = null;
@@ -80,6 +89,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   overview.setAttribute('aria-label', S.status);
   const status = ui.h('p', 'delta-status', S.loading);
   status.setAttribute('role', 'status');
+  status.dataset.observerOverall = 'loading';
   const reason = ui.h('p', 'delta-note');
   const captures = ui.h('p', 'delta-note');
   const statusBox = ui.h('div');
@@ -87,19 +97,38 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   const source = ui.h('p', 'delta-source', '—');
   const sourceBox = ui.h('div', 'delta-source-box');
   const startupGeometry = ui.h('p', 'delta-note');
-  sourceBox.append(ui.h('h4', 'delta-source-label', S.source), source, startupGeometry);
+  const sourceHeading = ui.h('h4', 'delta-source-label', S.source);
+  const picker = captureSourcePicker(ctx, sourceLabel, (id, trigger, calibration) => {
+    if (calibration) void authorizeCalibration(id);
+    else if (state && (setupIssues(state, picker.displayInfo()).length || (!setup.element.hidden && setup.pending()))) {
+      openSetup();
+      if (!setup.pending()) picker.focus();
+    } else void perform('start', { id, trigger });
+  }, updateControls, () => { choosingObservationScreen = false; updateControls(); play.focus(); });
+  sourceBox.append(sourceHeading, source, startupGeometry, picker.element);
   const refresh = ui.button(S.refresh, { size: 'sm', onClick: () => void refreshState() });
   refresh.setAttribute('aria-label', S.refresh);
-  const actionButtons = (['start', 'pause', 'stop'] as const).map((action) => {
-    const button = ui.button(S[action], { size: 'sm', onClick: () => void perform(action) });
-    button.setAttribute('aria-label', S[action]);
-    return { action, button };
-  });
+  const play = ui.button(S.start, { variant: 'primary', onClick: playback });
+  play.dataset.observerPlay = '';
+  const stop = ui.button(S.stop, { size: 'sm', onClick: () => void perform('stop') });
+  stop.setAttribute('aria-label', S.stop);
+  const configureSetup = ui.button(Q.title, { size: 'sm', onClick: () => openSetup() });
+  configureSetup.dataset.openSetup = '';
   const controls = ui.rowbar();
   controls.classList.add('delta-observation-actions');
-  controls.append(...actionButtons.map(({ button }) => button), refresh);
+  controls.append(configureSetup, stop, refresh);
+  const identity = identityCalibration(ctx, async (id) => {
+    const expected = ++generation;
+    const value = await invoke('identitySave', id);
+    if (!signal.aborted && expected === generation) {
+      appliedRead = ++stateRead;
+      nickname.value = value.detection.config.nickname;
+      render(value);
+    }
+    return value.detection.config.nickname;
+  }, updateControls, refreshState);
   const quickCalibration = quickCalibrationView({
-    ui, signal, language: ctx.language, panel: sheet.el, screenshots,
+    ui, signal, language: ctx.language, panel: sheet.el, identity: identity.element, screenshots,
     suggest: (previewSignal) => ctx.invoke('calibrationSuggest', [], previewSignal),
     image: (frameId, previewSignal) => ctx.invokePreviewBinary(frameId, previewSignal),
     dismiss: async (attemptId) => { await invoke('calibrationDismiss', attemptId); },
@@ -115,10 +144,26 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       clearCalibration();
       render(value);
     },
-    openManual: () => openSettings(calibrationSettings),
+    openManual: () => visitManual('regions'),
     onChange: updateControls,
   });
-  overview.append(statusBox, controls, sourceBox, quickCalibration.element);
+  const playbackBar = ui.h('header', 'delta-playback-bar');
+  playbackBar.dataset.observerBar = '';
+  playbackBar.setAttribute('aria-label', S.status);
+  playbackBar.append(statusBox, play);
+  const setup = quickSetup(ctx, quickCalibration.element, {
+    play: playback, close: () => void closeSetup(), jump: jumpToQuickField, manual: visitManual,
+    save: async (request) => {
+      if (busy) return;
+      const expected = ++generation;
+      busy = true; updateControls();
+      try {
+        const value = await invoke('quickSetupConfigure', request);
+        if (!signal.aborted && expected === generation) { configDirty = lootConfigDirty = false; render(value); }
+      } finally { busy = false; if (!signal.aborted) updateControls(); }
+    },
+  });
+  overview.append(controls, sourceBox, setup.element);
   const startupStatus = ui.h('p', 'delta-status', C.pending);
   startupStatus.setAttribute('role', 'status');
   const readiness = ui.h('section', 'delta-readiness');
@@ -129,33 +174,27 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     const combat = key === 'detection';
     const value = ui.h('p', 'delta-channel-status', '—');
     const detail = ui.h('p', 'delta-note');
-    const missingList = ui.h('ul', 'delta-missing');
     const missingLabels = {
-      nickname: D.reasons['nickname-required'], language: combat ? D.reasons['language-required'] : V.lootLanguage,
-      regions: combat ? D.reasons['calibration-required'] : L.uncalibrated,
+      nickname: D.nickname, language: combat ? D.language : L.language, regions: combat ? C.combat : C.loot,
     };
     const missing = (['nickname', 'language', 'regions'] as const).map((field) => {
-      const item = ui.h('li', null, missingLabels[field]);
-      item.hidden = true;
-      missingList.append(item);
+      const item = ui.h('span', null, missingLabels[field]);
+      item.dataset.observerMissing = field;
       return { field, item };
     });
     const configureLabel = combat ? V.configureCombat : V.configureLoot;
-    const configure = ui.button(configureLabel, { size: 'sm', onClick: () => openSettings(combat ? detectionSettings : lootSettings) });
-    configure.dataset.observerTarget = key;
-    const label = combat ? C.calibrateCombat : C.calibrateLoot;
-    const button = ui.button(label, { size: 'sm', onClick: () => {
-      openSettings(calibrationSettings);
-      void showCalibration(combat ? 'feed' : 'items', true);
+    const configure = ui.button(configureLabel, { size: 'sm', onClick: () => {
+      const first = configure.dataset.firstMissing;
+      openSetup(first === 'regions' ? combat ? 'combatRegions' : 'lootRegions' : first === 'nickname' || first === 'language' ? first : undefined);
     } });
-    button.setAttribute('aria-label', label);
+    configure.dataset.observerTarget = key;
     const actions = ui.rowbar();
     actions.classList.add('delta-startup-actions');
-    actions.append(configure, button);
+    actions.append(configure);
     const element = ui.h('div', 'delta-startup-item');
     element.dataset.startupCalibration = key;
-    element.append(ui.h('h5', 'delta-channel-title', combat ? V.combat : V.loot), value, missingList, detail, actions);
-    return { key, value, detail, missing, missingList, configure, button, element };
+    element.append(ui.h('h5', 'delta-channel-title', combat ? V.combat : V.loot), value, detail, actions);
+    return { key, value, detail, missing, configure, element };
   });
   const startupItems = ui.h('div', 'delta-startup-checks');
   startupItems.append(...startupChecks.map(({ element }) => element));
@@ -412,12 +451,23 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   const lootSettings = disclosure('loot', L.title, lootConfig, lootMessage, makeRow(L.status, lootBox));
   const calibrationSettings = disclosure('calibration', V.calibration, calibrationBox, calibrationMessage);
   const settings = ui.h('section', 'delta-configuration');
+  const setupBack = ui.button(Q.back, { size: 'sm', onClick: () => openSetup() });
+  setupBack.dataset.setupBack = '';
+  setupBack.hidden = true;
   settings.dataset.observerSection = 'settings';
   settings.setAttribute('aria-label', V.settings);
-  settings.append(ui.h('h4', 'delta-section-title', V.settings), detectionSettings.element, lootSettings.element, calibrationSettings.element,
+  settings.append(ui.h('h4', 'delta-section-title', V.settings), setupBack, detectionSettings.element, lootSettings.element, calibrationSettings.element,
     disclosure('knowledge', P.knowledge, knowledgeBox).element, disclosure('speech', P.speech, speechConfig).element,
     disclosure('diagnostics', S.kind, captures, simulationBox, simulationMessage).element);
-  sheet.body.append(overview, dashboard, settings);
+  sheet.body.append(playbackBar, overview, dashboard, settings);
+  const SizeObserver = sheet.el.ownerDocument.defaultView?.ResizeObserver;
+  if (SizeObserver) {
+    const barHeight = new SizeObserver(() => {
+      sheet.el.style.setProperty('--delta-bar-height', playbackBar.getBoundingClientRect().height + 'px');
+    });
+    barHeight.observe(playbackBar);
+    signal.addEventListener('abort', () => barHeight.disconnect(), { once: true });
+  }
 
   function statusLine(): HTMLElement {
     const element = ui.msgline();
@@ -433,9 +483,69 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     element.append(summary, body);
     return { element, summary };
   }
-  function openSettings({ element, summary }: ReturnType<typeof disclosure>): void {
+  function openSettings({ element, summary }: ReturnType<typeof disclosure>, field?: HTMLElement): void {
     element.open = true;
-    summary.focus();
+    (field ?? summary).focus();
+  }
+  function openSetup(field?: SetupField) {
+    if (!state) return;
+    if (!setupBack.hidden) {
+      for (const group of [detectionSettings, lootSettings, calibrationSettings]) group.element.open = false;
+    }
+    choosingObservationScreen = false;
+    setup.element.hidden = false;
+    setupBack.hidden = true;
+    updateControls();
+    if (field) setup.focusField(field);
+    else setup.heading.focus();
+  }
+  function visitManual(section: 'detection' | 'loot' | 'regions') {
+    setupBack.hidden = false;
+    if (section === 'regions') openSettings(calibrationSettings, previewCalibration.disabled ? undefined : previewCalibration);
+    else if (section === 'loot') openSettings(lootSettings, lootLanguage);
+    else openSettings(detectionSettings, state?.detection.config.nickname ? language : nickname);
+  }
+  function jumpToQuickField(field: SetupField) {
+    if (field === 'display') picker.focus();
+    else if (field === 'nickname') identity.focus();
+    else if (!quickCalibration.focusStart()) {
+      if (!picker.element.hidden) picker.focus();
+      else { reason.tabIndex = -1; reason.focus(); }
+    }
+  }
+  async function closeSetup() {
+    if (busy || setup.element.hidden) return;
+    if (state?.calibrationDisplayId || preparingScreen) {
+      busy = true; updateControls();
+      try { render(await invoke('cancelCalibration')); }
+      catch (error) { ui.toast(errorText(error), 'bad'); return; }
+      finally { busy = false; if (!signal.aborted) updateControls(); }
+    }
+    setup.element.hidden = true; setupBack.hidden = true;
+    setup.reset(); identity.resetDraft();
+    choosingObservationScreen = false;
+    updateControls();
+    configureSetup.focus();
+  }
+  async function authorizeCalibration(id: string) {
+    if (busy || preparingScreen || setup.element.hidden || !state) return;
+    const expected = ++generation;
+    busy = preparingScreen = true; updateControls();
+    try {
+      const value = await invoke('prepareCalibration', id);
+      if (!signal.aborted && expected === generation) render(value);
+    } catch (error) { if (!signal.aborted) ui.toast(errorText(error), 'bad'); }
+    finally { busy = preparingScreen = false; if (!signal.aborted) updateControls(); }
+  }
+  function playback() {
+    if (!state || play.disabled) return;
+    if (state.actions.pause && !state.actions.start) { void perform('pause'); return; }
+    if (setupIssues(state, picker.displayInfo()).length || (!setup.element.hidden && setup.pending())) { openSetup(); return; }
+    if (state.captureMode === 'standalone') {
+      choosingObservationScreen = true;
+      updateControls();
+      picker.focus();
+    } else if (state.actions.start) void perform('start');
   }
 
   function setText(element: HTMLElement, text: string): void {
@@ -457,8 +567,13 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       event.attribution?.spectating ? S.attributionLabels.spectating : ''].filter(Boolean).join(' · ');
   }
   const latest = (): DeltaEvent | undefined => state?.events.at(-1);
-  function calibrationKey(value: DeltaState): string {
-    return JSON.stringify([value.generation, value.intent, value.phase, value.reason, value.bound, value.configuredDisplayId, value.source, value.gameAspectRatio]);
+  function sameObservation(a: DeltaState, b: DeltaState): boolean {
+    return a.generation === b.generation && a.intent === b.intent && a.phase === b.phase && a.reason === b.reason
+      && a.bound === b.bound && a.configuredDisplayId === b.configuredDisplayId
+      && (a.source && b.source ? sameDeltaDisplay(a.source, b.source) : a.source === b.source);
+  }
+  function sameCalibrationState(a: DeltaState, b: DeltaState): boolean {
+    return sameObservation(a, b) && a.gameAspectRatio === b.gameAspectRatio && a.calibrationDisplayId === b.calibrationDisplayId;
   }
   function validRegion(roi: DeltaRoi | null): roi is DeltaRoi {
     return !!roi && Object.values(roi).every(Number.isFinite) && roi.x >= 0 && roi.y >= 0 && roi.width > 0 && roi.height > 0
@@ -570,10 +685,10 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     if (calibrationUrl) URL.revokeObjectURL(calibrationUrl);
     calibrationUrl = null;
   }
-  function evidenceKey(value: DeltaState): string {
-    const event = value.events.at(-1);
-    return JSON.stringify([value.generation, value.intent, value.phase, value.reason, value.bound, value.configuredDisplayId, value.source,
-      event?.id, event?.generation, event?.status === 'dropped']);
+  function sameEvidenceState(a: DeltaState, b: DeltaState): boolean {
+    const first = a.events.at(-1), second = b.events.at(-1);
+    return sameObservation(a, b) && first?.id === second?.id && first?.generation === second?.generation
+      && (first?.status === 'dropped') === (second?.status === 'dropped');
   }
   function clearSlot(slot: typeof imageSlots[number]): void {
     screenshots.dismissFor(slot.image);
@@ -602,13 +717,22 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   function updateControls(): void {
     const active = availability === 'active' && state !== null;
     const captureIssue = state?.startBlockedReason ?? state?.reason;
-    const captureAllowed = active && !!state?.bound && captureIssue !== 'view-disabled'
-      && captureIssue !== 'observation-disabled' && captureIssue !== 'view-permission';
-    quickCalibration.update(captureAllowed, busy || calibrationBusy, state?.calibrationHotkey, state ? {
-      displayId: state.configuredDisplayId, topologyRevision: state.startupCheck.source?.topologyRevision,
-      gameAspectRatio: state.gameAspectRatio,
-    } : undefined);
-    const locked = busy || quickCalibration.locked();
+    const standalone = state?.captureMode === 'standalone';
+    const selected = picker.display();
+    const captureAllowed = active && !!state?.bound && (standalone ? !!(state.standaloneGranted ||
+      (state.calibrationDisplayId && (!selected || selected === state.calibrationDisplayId)))
+      : captureIssue !== 'view-disabled' && captureIssue !== 'observation-disabled' && captureIssue !== 'view-permission');
+    const calibrationDisplay = state?.calibrationDisplayId || state?.configuredDisplayId || '';
+    const identitySource = captureAllowed && state ? JSON.stringify([state.captureMode, calibrationDisplay, state.startupCheck.source?.topologyRevision]) : null;
+    identity.update(active ? state?.detection.config.nickname : undefined, identitySource, busy || calibrationBusy || quickCalibration.locked(),
+      state?.identityDebug);
+    quickCalibration.update(captureAllowed, busy || calibrationBusy || identity.pending(), state?.calibrationHotkey, state ? {
+      displayId: calibrationDisplay, topologyRevision: state.startupCheck.source?.topologyRevision,
+      gameAspectRatio: state.gameAspectRatio, combat: state.detection.config.calibration, loot: state.loot.config.calibration,
+    } : undefined, (standalone && (!state?.calibrationHotkey || !!state.calibrationDisplayId)) || state?.captureMode === 'unsupported');
+    const locked = busy || quickCalibration.locked() || identity.pending();
+    picker.update(state, locked, choosingObservationScreen ? 'observe' : !setup.element.hidden ? 'calibration' : 'closed');
+    setup.update(state, locked, standalone && !captureAllowed, picker.displayInfo());
     speechEnabled.input.disabled = speechProbability.disabled = speechCooldown.disabled = speechStyle.disabled = locked || !active;
     for (const { checkbox } of [...speechKinds, ...speechRelations]) checkbox.input.disabled = locked || !active;
     saveSpeech.disabled = locked || !active || !speechConfigDirty || !speechProbability.validity.valid || !speechCooldown.validity.valid;
@@ -621,9 +745,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     lootLanguage.disabled = lootSensitivity.disabled = lootEnabled.input.disabled = locked || !active;
     saveLoot.disabled = locked || !active || !lootConfigDirty;
     saveDetection.disabled = locked || !active || !configDirty;
-    previewCalibration.disabled = locked || calibrationBusy || !active || state?.phase !== 'running';
-    for (const { button, configure } of startupChecks) {
-      button.disabled = previewCalibration.disabled;
+    previewCalibration.disabled = locked || calibrationBusy || !captureAllowed;
+    for (const { configure } of startupChecks) {
       configure.disabled = !active || locked;
     }
     saveCalibration.disabled = locked || calibrationBusy || !active || !calibrationFrame || !validRegion(calibrationRoi)
@@ -636,11 +759,20 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     clearPersonal.disabled = locked || calibrationBusy || !active || !calibrationFrame || !personalFeedbackRoi || !validRegion(calibrationRoi) || regionTooLarge(false);
     regionPurpose.disabled = locked || calibrationBusy || !calibrationFrame;
     for (const { input } of regionFields) input.disabled = locked || calibrationBusy || !calibrationFrame;
-    for (const { action, button } of actionButtons) {
-      button.disabled = locked || !active || !state?.actions[action];
-      button.hidden = action === 'start' ? !!state?.actions.pause && !state.actions.start : !state?.actions[action];
-      button.classList.toggle('primary', action === 'start' || (action === 'pause' && !state?.actions.start));
+    const pausing = !!state?.actions.pause && !state.actions.start;
+    const mode = pausing ? 'pause' : 'start';
+    if (play.dataset.mode !== mode) {
+      play.dataset.mode = mode;
+      play.textContent = S[mode];
+      play.setAttribute('aria-label', S[mode]);
     }
+    const mayConfigure = !!state && setupIssues(state).length > 0;
+    if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
+    play.disabled = (pausing ? busy : locked) || !active || state?.captureMode === 'unsupported'
+      || (!pausing && !standalone && !state?.actions.start && !mayConfigure);
+    configureSetup.disabled = !active || locked;
+    stop.hidden = !pendingGrant && !state?.actions.stop;
+    stop.disabled = !pendingGrant && (busy || !active || !state?.actions.stop);
     simulate.disabled = locked || !active || !state?.actions.simulate;
     kind.disabled = simulate.disabled;
     refresh.disabled = busy || quickCalibration.pending() || polling;
@@ -648,20 +780,47 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     for (const slot of imageSlots) slot.button.disabled = locked || slot.busy || !active || state?.phase !== 'running' || !event
       || event.status === 'dropped' || event.generation !== state.generation || Date.parse(event.validUntil) <= Date.now();
   }
+  function updatePlaybackStatus(value: DeltaState, incomplete: boolean) {
+    const cause = value.reason && !['stopped', 'paused'].includes(value.reason) ? value.reason : value.startBlockedReason;
+    const permission = cause === 'view-permission';
+    const detail = cause && cause !== 'unbound' ? S.reasons[cause] : '';
+    let code: string, title: string, hint = detail;
+    if (value.phase === 'error') { code = 'error'; title = S.phases.error; }
+    else if (value.phase === 'unbound' || value.captureMode === 'unsupported') {
+      code = 'unavailable'; title = value.captureMode === 'unsupported' ? captureLabels.unsupported : S.phases.unbound;
+    } else if ((cause && !permission) || (value.phase === 'blocked' && !permission)) {
+      code = 'blocked'; title = S.phases.blocked;
+    } else if (value.intent === 'paused' && value.phase === 'stopped') {
+      code = 'paused'; title = S.reasons.paused;
+    } else if (permission || (value.captureMode === 'standalone' && !value.standaloneGranted)) {
+      code = 'permission'; title = V.needsScreen;
+      if (incomplete) hint = V.incomplete;
+      else if (value.captureMode === 'standalone') hint = '';
+    } else if (value.phase === 'running' || value.phase === 'starting') {
+      code = value.phase; title = S.phases[value.phase];
+      if (incomplete) hint = V.incomplete;
+    } else if (incomplete) { code = 'setup'; title = V.incomplete; }
+    else if (value.actions.start) { code = 'ready'; title = V.canObserve; }
+    else { code = 'blocked'; title = S.phases.blocked; }
+    setText(status, title);
+    status.dataset.observerOverall = code;
+    status.dataset.phase = value.phase;
+    setText(reason, hint);
+  }
   function render(value: DeltaState): void {
-    if (state && evidenceKey(state) !== evidenceKey(value)) clearImages();
-    if (state && calibrationKey(state) !== calibrationKey(value)) clearCalibration();
+    if (state && !sameEvidenceState(state, value)) clearImages();
+    if (state && !sameCalibrationState(state, value)) clearCalibration();
     if (state && JSON.stringify([state.knowledge.source, state.knowledge.version, state.knowledge.name])
       !== JSON.stringify([value.knowledge.source, value.knowledge.version, value.knowledge.name])) clearKnowledgeContent();
     state = value;
+    if (value.calibrationHotkey?.attempt && value.phase === 'running') setup.element.hidden = false;
     availability = 'active';
-    setText(status, value.reason === 'paused' ? S.reasons.paused : S.phases[value.phase]);
-    status.dataset.phase = value.phase;
-    const reasonForStart = !value.actions.start && !value.actions.pause ? value.startBlockedReason : null;
-    const observationIssue = reasonForStart ?? value.reason;
-    setText(reason, observationIssue && !['paused', 'stopped', 'unbound'].includes(observationIssue) ? S.reasons[observationIssue] : '');
     setText(captures, S.captures(value.worker.captures));
-    setText(source, value.source ? sourceLabel(value.source) : value.bound ? value.configuredDisplayId ? V.sourcePending : S.primary : '—');
+    const captureLabel = value.captureMode === 'host' ? captureLabels.host : value.captureMode === 'standalone' ? captureLabels.standalone : '';
+    setText(sourceHeading, [S.source, captureLabel].filter(Boolean).join(' · '));
+    source.hidden = value.captureMode === 'standalone' && !value.standaloneGranted;
+    setText(source, value.captureMode === 'unsupported' ? captureLabels.unsupported
+      : value.source ? sourceLabel(value.source) : value.bound ? value.configuredDisplayId ? V.sourcePending : S.primary : '—');
     for (const { key, value: element } of knowledgeFields) {
       setText(element, key === 'source' ? `${P[value.knowledge.source]} · ${value.knowledge.name}`
         : key === 'bytes' ? value.knowledge.bytes.toLocaleString() : value.knowledge.version);
@@ -683,8 +842,9 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     startupStatus.dataset.startupPhase = check.phase;
     const geometry = check.source;
     setText(startupGeometry, geometry ? `${C.resolution} ${geometry.width} × ${geometry.height} · ${C.aspectRatio} ${aspectLabel(geometry.width, geometry.height)} · ${C.scale} ${geometry.scaleFactor === null ? C.unknown : `${Number((geometry.scaleFactor * 100).toFixed(2))}%`}` : '');
+    const blockedReason = value.phase === 'blocked' || value.phase === 'error' ? value.reason ?? value.startBlockedReason : value.startBlockedReason;
     readiness.hidden = false;
-    for (const { key, value: element, detail, missing, missingList, button } of startupChecks) {
+    for (const { key, value: element, detail, missing, configure } of startupChecks) {
       const channel = value[key];
       const calibration = check[key];
       const missingFields = {
@@ -692,21 +852,28 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
         language: !channel.config.language,
         regions: !channel.config.calibration,
       };
-      const needsConfig = Object.values(missingFields).some(Boolean);
-      missingList.hidden = !needsConfig;
-      for (const { field, item } of missing) {
-        item.hidden = !missingFields[field];
-        if (missingFields[field]) item.dataset.observerMissing = field;
-        else delete item.dataset.observerMissing;
+      const fields = missing.filter(({ field }) => channel.config.enabled && missingFields[field]);
+      const first = fields[0]?.field;
+      if (first) configure.dataset.firstMissing = first;
+      else delete configure.dataset.firstMissing;
+      let heading = channel.phase === 'ready' ? key === 'detection' ? V.watchCombat : V.watchLoot : D.phases[channel.phase];
+      if (first) heading = channel.phase === 'uncalibrated' ? V.incomplete : `${heading} · ${V.incomplete}`;
+      const summary = [heading, ...fields.map(({ item }) => item.textContent)].join(' · ');
+      if (element.textContent !== summary) {
+        element.replaceChildren(heading);
+        for (const { item } of fields) element.append(' · ', item);
       }
-      setText(element, channel.config.enabled && needsConfig ? V.incomplete : D.phases[channel.phase]);
       element.dataset.startupCalibrationStatus = calibration.status;
-      element.dataset.tone = !channel.config.enabled ? 'off' : needsConfig || calibration.status === 'invalid'
+      element.dataset.tone = !channel.config.enabled ? 'off' : first || calibration.status === 'invalid'
         || channel.phase === 'error' || channel.phase === 'unavailable' ? 'warn' : channel.phase === 'ready' ? 'on' : 'plain';
       const issue = channel.reason;
-      setText(detail, calibration.status === 'invalid' && calibration.reason ? C.reasons[calibration.reason]
-        : issue && !needsConfig ? issue === 'language-conflict' ? L.languageConflict : D.reasons[issue] : '');
-      button.hidden = value.phase !== 'running' || calibration.status === 'disabled' || calibration.status === 'compatible';
+      const calibrationIssue = calibration.status === 'invalid' && calibration.reason ? C.reasons[calibration.reason] : '';
+      const setupIssue = issue === 'nickname-required' || issue === 'language-required' || issue === 'calibration-required';
+      const explainedByCalibration = calibrationIssue && (issue === 'roi-too-large' ? calibration.reason === issue
+        : issue === 'source-changed' && calibration.reason !== 'roi-too-large');
+      const channelIssue = !issue || (first && setupIssue) || explainedByCalibration ? ''
+        : issue === 'language-conflict' ? L.languageConflict : issue === 'roi-too-large' && key === 'loot' ? L.limits : D.reasons[issue];
+      setText(detail, channel.config.enabled ? [blockedReason ? S.reasons[blockedReason] : '', channelIssue, calibrationIssue].filter(Boolean).join(' ') : '');
     }
     if (!configDirty) {
       nickname.value = value.detection.config.nickname;
@@ -718,7 +885,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       lootSensitivity.value = value.loot.config.sensitivity;
       lootEnabled.setChecked(value.loot.config.enabled);
     }
-    setText(detectionStatus, D.phases[value.detection.phase]);
+    setText(detectionStatus, value.detection.phase === 'ready' ? V.watchCombat : D.phases[value.detection.phase]);
     detectionStatus.dataset.detectionPhase = value.detection.phase;
     setText(detectionReason, value.detection.reason ? D.reasons[value.detection.reason] : '');
     const calibrated = value.detection.config.calibration && !['source-changed', 'calibration-required', 'roi-too-large'].includes(value.detection.reason ?? '');
@@ -728,7 +895,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
         ? value.detection.availableLanguages.join(', ') || D.noEngine : String(value.detection[key]));
     }
     setText(detectionError, value.detection.lastError ?? '');
-    setText(lootStatus, D.phases[value.loot.phase]);
+    setText(lootStatus, value.loot.phase === 'ready' ? V.watchLoot : D.phases[value.loot.phase]);
     lootStatus.dataset.lootPhase = value.loot.phase;
     const lootStateReason = value.loot.reason;
     setText(lootReason, lootStateReason === 'language-conflict' ? L.languageConflict : lootStateReason === 'roi-too-large' ? L.limits
@@ -758,12 +925,16 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     clearCalibration();
     clearKnowledgeContent();
     state = null;
+    setup.element.hidden = true; setupBack.hidden = true; choosingObservationScreen = false; setup.reset();
     availability = inactive ? 'inactive' : 'unavailable';
     setText(status, text);
+    status.dataset.observerOverall = 'unavailable';
     delete status.dataset.phase;
     setText(reason, detail);
     captures.textContent = '';
     source.textContent = '—';
+    source.hidden = false;
+    setText(sourceHeading, S.source);
     for (const { value } of knowledgeFields) value.textContent = '—';
     knowledgeError.textContent = '';
     speechActivity.textContent = '';
@@ -771,11 +942,10 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     delete startupStatus.dataset.startupPhase;
     startupGeometry.textContent = '';
     readiness.hidden = true;
-    for (const { value, detail, button } of startupChecks) {
+    for (const { value, detail } of startupChecks) {
       value.textContent = '—';
       delete value.dataset.startupCalibrationStatus;
       detail.textContent = '';
-      button.hidden = true;
     }
     detectionStatus.textContent = '—';
     delete detectionStatus.dataset.detectionPhase;
@@ -812,28 +982,36 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     catch (error) { if (!signal.aborted && expected === generation) showUnavailable(S.stateFailed(errorText(error))); }
     finally { polling = false; if (!signal.aborted) updateControls(); }
   }
-  async function perform(action: Action): Promise<void> {
-    if (busy || quickCalibration.locked() || !state?.actions[action] || signal.aborted) return;
+  async function perform(action: Action, selection?: { id: string; trigger: HTMLButtonElement }): Promise<void> {
+    const cancelsGrant = pendingGrant && action === 'stop';
+    if (!state || (busy && !cancelsGrant) || signal.aborted) return;
+    const revokesAccess = state.captureMode === 'standalone' && state.standaloneGranted && action !== 'start';
+    if (!cancelsGrant && ((!revokesAccess && quickCalibration.locked()) || (selection ? selection.trigger.disabled : !state.actions[action]))) return;
     const doc = sheet.el.ownerDocument;
-    const trigger = actionButtons.find((item) => item.action === action)!.button;
+    const trigger = selection?.trigger ?? (action === 'stop' ? stop : play);
     const hadFocus = doc.activeElement === trigger;
-    generation++;
+    const expected = ++generation;
+    pendingGrant = !!selection;
     busy = true;
     clearImages();
     clearCalibration();
     eventMessage.textContent = '';
     updateControls();
     try {
-      const value = await invoke(action);
-      if (!signal.aborted) render(value);
-    } catch (error) { if (!signal.aborted) showUnavailable(S.stateFailed(errorText(error))); }
+      const value = selection ? await invoke('startStandalone', selection.id) : await invoke(action);
+      if (!signal.aborted && expected === generation) {
+        choosingObservationScreen = false;
+        setup.element.hidden = true; setupBack.hidden = true; setup.reset();
+        render(value);
+      }
+    } catch (error) { if (!signal.aborted && expected === generation) showUnavailable(S.stateFailed(errorText(error))); }
     finally {
-      busy = false;
-      if (!signal.aborted) {
+      if (!signal.aborted && expected === generation) {
+        busy = pendingGrant = false;
         updateControls();
         if (hadFocus && (doc.activeElement === doc.body || doc.activeElement === trigger)) {
-          const next = actionButtons.find(({ button }) => !button.hidden && !button.disabled)?.button ?? refresh;
-          (trigger.hidden || trigger.disabled ? next : trigger).focus();
+          const next = !play.disabled ? play : refresh;
+          (trigger.closest('[hidden]') || trigger.disabled ? next : trigger).focus();
         }
       }
     }
@@ -955,13 +1133,13 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       if (!signal.aborted) { knowledgeMessage.textContent = errorText(error); knowledgeMessage.classList.add('bad'); }
     } finally { busy = false; if (!signal.aborted) updateControls(); }
   }
-  async function showCalibration(purpose: 'feed' | 'items' = 'feed', fromOverview = false): Promise<void> {
+  async function showCalibration(purpose: 'feed' | 'items' = 'feed'): Promise<void> {
     if (previewCalibration.disabled || !state || signal.aborted) return;
     const doc = sheet.el.ownerDocument;
     const hadFocus = doc.activeElement === previewCalibration;
     calibrationMessage.textContent = '';
     clearCalibration();
-    const version = calibrationVersion, expected = generation, key = calibrationKey(state);
+    const version = calibrationVersion, expected = generation, initial = state;
     const controller = new AbortController();
     calibrationController = controller;
     calibrationBusy = true;
@@ -977,8 +1155,9 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       const value = await ctx.invoke('state', [], previewSignal);
       if (!current()) return;
       if (read >= appliedRead) { appliedRead = read; render(value); }
-      if (!current() || !state || calibrationKey(state) !== key || calibrationKey(value) !== key || value.phase !== 'running'
-        || JSON.stringify(value.source) !== JSON.stringify(frame.display)) return;
+      if (!current() || !state || !sameCalibrationState(state, initial) || !sameCalibrationState(value, initial)) return;
+      if (value.phase === 'running' && value.source ? !sameDeltaDisplay(value.source, frame.display)
+        : (value.calibrationDisplayId || value.configuredDisplayId) && (value.calibrationDisplayId || value.configuredDisplayId) !== frame.display.id) return;
       calibrationFrame = frame;
       calibrationUrl = URL.createObjectURL(blob);
       calibrationImage.src = calibrationUrl;
@@ -989,13 +1168,13 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       regionPurpose.value = purpose;
       const saved = value.detection.config.calibration;
       if (saved && (saved.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === value.gameAspectRatio
-        && saved.topologyRevision === frame.topologyRevision && JSON.stringify(saved.display) === JSON.stringify(frame.display)) {
+        && saved.topologyRevision === frame.topologyRevision && sameDeltaDisplay(saved.display, frame.display)) {
         calibrationRoi = { ...saved.roi };
         personalFeedbackRoi = saved.personalFeedbackRoi ? { ...saved.personalFeedbackRoi } : null;
       }
       const lootSaved = value.loot.config.calibration;
       if (lootSaved && (lootSaved.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === value.gameAspectRatio
-        && lootSaved.topologyRevision === frame.topologyRevision && JSON.stringify(lootSaved.display) === JSON.stringify(frame.display)) {
+        && lootSaved.topologyRevision === frame.topologyRevision && sameDeltaDisplay(lootSaved.display, frame.display)) {
         itemsRoi = { ...lootSaved.itemsRoi };
         contextRoi = { ...lootSaved.contextRoi };
       }
@@ -1007,7 +1186,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       if (version === calibrationVersion) { calibrationBusy = false; calibrationController = null; }
       if (!signal.aborted) {
         updateControls();
-        if (!fromOverview && hadFocus && current() && calibrationFrame && calibrationSettings.element.open
+        if (hadFocus && current() && calibrationFrame && calibrationSettings.element.open
           && (doc.activeElement === doc.body || doc.activeElement === previewCalibration)) regionPurpose.focus();
       }
     }
@@ -1068,7 +1247,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     if (slot.button.disabled || !event || !state || signal.aborted) return;
     if (Date.parse(event.validUntil) <= Date.now()) { eventMessage.textContent = S.dropReasons.expired; updateControls(); return; }
     clearSlot(slot);
-    const version = slot.version, expected = generation, key = evidenceKey(state);
+    const version = slot.version, expected = generation, initial = state;
     const controller = new AbortController();
     slot.controller = controller;
     slot.busy = true;
@@ -1082,7 +1261,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       const value = await ctx.invoke('state', [], imageSignal);
       if (!current()) return;
       if (read >= appliedRead) { appliedRead = read; render(value); }
-      if (!current() || !state || evidenceKey(state) !== key || evidenceKey(value) !== key || value.phase !== 'running'
+      if (!current() || !state || !sameEvidenceState(state, initial) || !sameEvidenceState(value, initial) || value.phase !== 'running'
         || event.generation !== value.generation || event.generation !== state.generation) return;
       if (Date.parse(value.events.at(-1)!.validUntil) <= Date.now()) { eventMessage.textContent = S.dropReasons.expired; return; }
       slot.url = URL.createObjectURL(blob);
@@ -1104,6 +1283,11 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   updateControls();
   void refreshState();
   ctx.interval(() => void refreshState(), INTERVAL_MS);
-  signal.addEventListener('abort', () => { clearImages(); clearCalibration(); }, { once: true });
+  signal.addEventListener('abort', () => {
+    clearImages(); clearCalibration();
+    if (!setup.element.hidden && (preparingScreen || state?.calibrationDisplayId)) {
+      void ctx.invoke('cancelCalibration', []).catch(() => {});
+    }
+  }, { once: true });
   return sheet.el;
 }
