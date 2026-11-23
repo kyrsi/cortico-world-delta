@@ -11,7 +11,7 @@ Game observer watches the monitor you select, reads combat notifications with Wi
 
 ## Host compatibility
 
-- **Stock Coopanion 0.2.23 on Windows** uses the World’s own screen capture. Choose a monitor and grant access in the observer panel. Coopanion’s global pause controls event delivery. To stop screen reading, pause or stop observation in the panel. Either action, or a Core restart, ends the grant.
+- **Stock Coopanion 0.2.23 on Windows** uses the World’s own screen capture. Choose a monitor and grant access in the observer panel. Pausing Coo does not stop standalone screen capture; that pause still controls event delivery. Pause or stop observation in the panel to stop capturing. Either action, or a Core restart, ends the grant.
 - **Customized Coopanion 0.2.22 with the observer binding** uses the host’s monitor selection, viewing policy and registered calibration shortcut. [World binding interface](src/protocol.ts)
 
 ## Install

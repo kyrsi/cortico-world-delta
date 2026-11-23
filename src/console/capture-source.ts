@@ -23,12 +23,14 @@ export function captureSourcePicker(
   grant.dataset.sourceGrant = '';
   const preparation = setupText(ctx.language).grant;
   const consent = ui.h('p', 'delta-note', T.consent);
+  const pauseCapture = ui.h('p', 'delta-note', T.pauseCapture);
+  pauseCapture.dataset.capturePause = '';
   const message = ui.h('p', 'delta-note');
   const dismiss = ui.button(calibrationText(ctx.language).cancel, { size: 'sm', onClick: cancel });
   dismiss.dataset.sourceCancel = '';
   message.setAttribute('role', 'status');
   controls.append(select, refresh, grant, dismiss);
-  element.append(consent, controls, message);
+  element.append(consent, pauseCapture, controls, message);
   element.hidden = true;
   let state: DeltaState | null = null;
   let displays: CuaDisplay[] = [];
