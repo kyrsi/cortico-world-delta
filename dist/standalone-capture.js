@@ -2187,8 +2187,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/roi.ts
+function captureRoi(value) {
+  if (!value || typeof value !== "object") return null;
+  const roi = value;
+  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
+  return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
+}
 function captureRectangle(roi, width, height) {
-  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) throw new Error("Invalid capture region");
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
   const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
   return {
     x,

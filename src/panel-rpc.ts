@@ -7,6 +7,7 @@ import type { DeltaCapture } from './engine-ipc.ts';
 import type { DeltaText } from './i18n/index.ts';
 import { lootCalibrationFitsBudget } from './loot-detector.ts';
 import { validIdentityNickname } from './profile-identity.ts';
+import { captureRoi } from './roi.ts';
 import { isGameAspectRatio, type DeltaCalibration, type DeltaCalibrationApplyRequest, type DeltaCalibrationSuggestion, type DeltaDetectionConfigureRequest, type DeltaGameAspectRatio, type DeltaIntent, type DeltaKnowledgeImportRequest, type DeltaLootConfigureRequest, type DeltaPanelMethods, type DeltaQuickSetupRequest, type DeltaScreenshotRevealRequest, type DeltaSimulateRequest, type DeltaSimulationReceipt, type DeltaSpeechConfig, type DeltaState } from './protocol.ts';
 import { validateSpeechConfig } from './speech.ts';
 
@@ -98,6 +99,22 @@ function simulateRequest(args: unknown[]): [DeltaSimulateRequest] | null {
   return [request];
 }
 
+function detectionCalibration(args: unknown[]): DeltaPanelMethods['detectionCalibrate']['args'] | null {
+  if (args.length !== 2 && args.length !== 3) return null;
+  const roi = captureRoi(args[1]);
+  if (!roi) return null;
+  if (args.length === 2) return [args[0] as string, roi];
+  if (args[2] == null) return [args[0] as string, roi, null];
+  const personal = captureRoi(args[2]);
+  return personal ? [args[0] as string, roi, personal] : null;
+}
+
+function lootCalibration(args: unknown[]): DeltaPanelMethods['lootCalibrate']['args'] | null {
+  if (args.length !== 3) return null;
+  const items = captureRoi(args[1]), context = captureRoi(args[2]);
+  return items && context ? [args[0] as string, items, context] : null;
+}
+
 function revealRequest(args: unknown[]): [DeltaScreenshotRevealRequest] | null {
   if (args.length !== 1 || !object(args[0])) return null;
   const request = args[0] as DeltaScreenshotRevealRequest;
@@ -180,35 +197,28 @@ const table = {
     catch { throw new Error(host.errors.unavailable); }
     return {};
   } },
-  detectionCalibrate: {
-    validate: (args) => args as DeltaPanelMethods['detectionCalibrate']['args'],
-    async handle(host, args) {
-      const roi = args[1], personalFeedbackRoi = args[2], preview = await host.previewForSave(args[0]);
-      if ((args.length !== 2 && args.length !== 3) || !preview || !roi
-        || (personalFeedbackRoi !== undefined && personalFeedbackRoi !== null && typeof personalFeedbackRoi !== 'object')) throw new Error(host.errors.invalidRequest);
-      const calibration = { ...host.calibrationSource(preview), roi,
-        ...(args.length === 3 || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}) };
-      try { if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest); }
-      catch { throw new Error(host.errors.invalidRequest); }
-      host.persist({ detection: { calibration } });
-      host.clearManualPreview(); host.reconcile(); return host.state();
-    },
-  },
+  detectionCalibrate: { validate: detectionCalibration, async handle(host, [frameId, roi, personalFeedbackRoi]) {
+    const preview = await host.previewForSave(frameId);
+    if (!preview) throw new Error(host.errors.invalidRequest);
+    const calibration = { ...host.calibrationSource(preview), roi,
+      ...(personalFeedbackRoi !== undefined || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}) };
+    try { if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest); }
+    catch { throw new Error(host.errors.invalidRequest); }
+    host.persist({ detection: { calibration } });
+    host.clearManualPreview(); host.reconcile(); return host.state();
+  } },
   lootConfigure: { validate: lootRequest, handle(host, [request]) {
     host.persist({ loot: { enabled: request.enabled, language: request.language, sensitivity: request.sensitivity } });
     host.reconcile(); return host.state();
   } },
-  lootCalibrate: {
-    validate: (args) => args as DeltaPanelMethods['lootCalibrate']['args'],
-    async handle(host, args) {
-      const preview = await host.previewForSave(args[0]), itemsRoi = args[1], contextRoi = args[2];
-      if (args.length !== 3 || !preview || !itemsRoi || !contextRoi) throw new Error(host.errors.invalidRequest);
-      const calibration = { ...host.calibrationSource(preview), itemsRoi, contextRoi };
-      if (!lootCalibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
-      host.persist({ loot: { calibration } });
-      host.clearManualPreview(); host.reconcile(); return host.state();
-    },
-  },
+  lootCalibrate: { validate: lootCalibration, async handle(host, [frameId, itemsRoi, contextRoi]) {
+    const preview = await host.previewForSave(frameId);
+    if (!preview) throw new Error(host.errors.invalidRequest);
+    const calibration = { ...host.calibrationSource(preview), itemsRoi, contextRoi };
+    if (!lootCalibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
+    host.persist({ loot: { calibration } });
+    host.clearManualPreview(); host.reconcile(); return host.state();
+  } },
 } satisfies { [M in keyof DeltaPanelMethods]: Entry<M> };
 
 export async function invokePanel(host: DeltaPanelHost, panel: string, method: string, args: unknown[]): Promise<unknown> {

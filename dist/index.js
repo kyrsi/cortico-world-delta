@@ -3005,8 +3005,14 @@ import { join as join5 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // src/roi.ts
+function captureRoi(value) {
+  if (!value || typeof value !== "object") return null;
+  const roi = value;
+  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
+  return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
+}
 function captureRectangle(roi, width, height) {
-  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) throw new Error("Invalid capture region");
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
   const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
   return {
     x,
@@ -3780,6 +3786,20 @@ function simulateRequest(args) {
   if (request.dedupKey !== void 0 && (typeof request.dedupKey !== "string" || !request.dedupKey.trim() || request.dedupKey.length > 200)) return null;
   return [request];
 }
+function detectionCalibration(args) {
+  if (args.length !== 2 && args.length !== 3) return null;
+  const roi = captureRoi(args[1]);
+  if (!roi) return null;
+  if (args.length === 2) return [args[0], roi];
+  if (args[2] == null) return [args[0], roi, null];
+  const personal = captureRoi(args[2]);
+  return personal ? [args[0], roi, personal] : null;
+}
+function lootCalibration(args) {
+  if (args.length !== 3) return null;
+  const items = captureRoi(args[1]), context = captureRoi(args[2]);
+  return items && context ? [args[0], items, context] : null;
+}
 function revealRequest(args) {
   if (args.length !== 1 || !object(args[0])) return null;
   const request = args[0];
@@ -3896,45 +3916,39 @@ var table = {
     }
     return {};
   } },
-  detectionCalibrate: {
-    validate: (args) => args,
-    async handle(host, args) {
-      const roi = args[1], personalFeedbackRoi = args[2], preview = await host.previewForSave(args[0]);
-      if (args.length !== 2 && args.length !== 3 || !preview || !roi || personalFeedbackRoi !== void 0 && personalFeedbackRoi !== null && typeof personalFeedbackRoi !== "object") throw new Error(host.errors.invalidRequest);
-      const calibration = {
-        ...host.calibrationSource(preview),
-        roi,
-        ...args.length === 3 || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}
-      };
-      try {
-        if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
-      } catch {
-        throw new Error(host.errors.invalidRequest);
-      }
-      host.persist({ detection: { calibration } });
-      host.clearManualPreview();
-      host.reconcile();
-      return host.state();
+  detectionCalibrate: { validate: detectionCalibration, async handle(host, [frameId, roi, personalFeedbackRoi]) {
+    const preview = await host.previewForSave(frameId);
+    if (!preview) throw new Error(host.errors.invalidRequest);
+    const calibration = {
+      ...host.calibrationSource(preview),
+      roi,
+      ...personalFeedbackRoi !== void 0 || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}
+    };
+    try {
+      if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
+    } catch {
+      throw new Error(host.errors.invalidRequest);
     }
-  },
+    host.persist({ detection: { calibration } });
+    host.clearManualPreview();
+    host.reconcile();
+    return host.state();
+  } },
   lootConfigure: { validate: lootRequest, handle(host, [request]) {
     host.persist({ loot: { enabled: request.enabled, language: request.language, sensitivity: request.sensitivity } });
     host.reconcile();
     return host.state();
   } },
-  lootCalibrate: {
-    validate: (args) => args,
-    async handle(host, args) {
-      const preview = await host.previewForSave(args[0]), itemsRoi = args[1], contextRoi = args[2];
-      if (args.length !== 3 || !preview || !itemsRoi || !contextRoi) throw new Error(host.errors.invalidRequest);
-      const calibration = { ...host.calibrationSource(preview), itemsRoi, contextRoi };
-      if (!lootCalibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
-      host.persist({ loot: { calibration } });
-      host.clearManualPreview();
-      host.reconcile();
-      return host.state();
-    }
-  }
+  lootCalibrate: { validate: lootCalibration, async handle(host, [frameId, itemsRoi, contextRoi]) {
+    const preview = await host.previewForSave(frameId);
+    if (!preview) throw new Error(host.errors.invalidRequest);
+    const calibration = { ...host.calibrationSource(preview), itemsRoi, contextRoi };
+    if (!lootCalibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
+    host.persist({ loot: { calibration } });
+    host.clearManualPreview();
+    host.reconcile();
+    return host.state();
+  } }
 };
 async function invokePanel(host, panel, method, args) {
   if (panel !== "observer" || !Object.hasOwn(table, method)) throw new Error(host.errors.unknownMethod);
