@@ -100,7 +100,7 @@ namespace DeltaObservation
                 return true;
             }, IntPtr.Zero);
             if (!complete || displays.Count == 0) throw new InvalidOperationException("displayUnavailable");
-            return displays.ToArray();
+            return displays.OrderBy(d => d.id, StringComparer.Ordinal).ToArray();
         }
     }
 
