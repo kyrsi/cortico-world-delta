@@ -28,7 +28,7 @@ While the market index updates, you can install `cortico-world-delta@1.1.0` in a
 3. Click **One-click calibration** and switch to the Chinese solo or squad preparation screen within three seconds. Review the estimated regions and confirm within 60 seconds. For the loot region, repeat with the safe-box title and full grid visible. On Windows, you can also press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd> in game when the panel shows the shortcut is registered.
 4. If the suggested regions need adjustment, open detailed settings, make the change and return to quick setup. Saved settings carry over to the next session. Use the pause control to end capture. Recent events show recognition and delivery results. Combat detection ignores settings captions such as the Chinese heading for kill and knockdown recognition. Chinese OCR requires the Windows Chinese language pack. Calibration has been replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified.
 
-Under **Player identification**, choose **Show debug log** to find the record and full-resolution screenshot for each ID calibration. Saving your ID successfully clears pending calibration screenshots and keeps the log. [ID calibration troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
+Under **Player identification**, choose **Show debug log** to find the record and full-resolution screenshot for an ID calibration. The folder keeps the three newest calibration screenshots. Once the log passes 1 MiB it is renamed to `attempts.1.jsonl` and a new log starts. Saving your ID successfully clears the remaining screenshots. [ID calibration troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
 
 ## Reactions and game notes
 

@@ -2900,6 +2900,9 @@ var DELTA_KNOWLEDGE_MAX_BYTES = 65536;
 var DELTA_KNOWLEDGE_MAX_CHARACTERS = 48e3;
 var DELTA_KNOWLEDGE_MAX_SECTIONS = 64;
 var DELTA_KNOWLEDGE_CONTEXT_MAX_CHARACTERS = 6e3;
+var DELTA_IDENTITY_DEBUG_MAX_FRAMES = 3;
+var DELTA_IDENTITY_DEBUG_MAX_LOG_BYTES = 1048576;
+var DELTA_REVEAL_MAX_SCREENSHOTS = 20;
 
 // src/config.ts
 var DELTA_SPEECH_DEFAULTS = {
@@ -3492,7 +3495,7 @@ var KnowledgeStore = class {
 };
 
 // src/identity-debug.ts
-import { closeSync, lstatSync, mkdirSync as mkdirSync2, openSync, readdirSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync, lstatSync, mkdirSync as mkdirSync2, openSync, readdirSync, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join2, resolve } from "node:path";
 
 // package.json
@@ -3561,9 +3564,13 @@ var package_default = {
 
 // src/identity-debug.ts
 var frameName = /^frame-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.png$/i;
+var logName = "attempts.jsonl";
+var previousLogName = "attempts.1.jsonl";
 var IdentityDebugStore = class {
-  constructor(dataDir) {
+  constructor(dataDir, limits = {}) {
     this.dataDir = dataDir;
+    this.maxFrames = limits.maxFrames ?? DELTA_IDENTITY_DEBUG_MAX_FRAMES;
+    this.maxLogBytes = limits.maxLogBytes ?? DELTA_IDENTITY_DEBUG_MAX_LOG_BYTES;
     try {
       const dir = this.directory(false);
       this.hasLog = this.regularLog(dir);
@@ -3574,6 +3581,8 @@ var IdentityDebugStore = class {
   dataDir;
   hasLog = false;
   pendingFrames = false;
+  maxFrames;
+  maxLogBytes;
   state() {
     return { hasLog: this.hasLog, pendingFrames: this.pendingFrames };
   }
@@ -3588,8 +3597,13 @@ var IdentityDebugStore = class {
     return dir;
   }
   regularLog(dir) {
-    const stat = lstatSync(join2(dir, "attempts.jsonl"), { throwIfNoEntry: false });
-    return !!stat && stat.isFile() && stat.nlink === 1;
+    return !!this.regularStat(join2(dir, logName));
+  }
+  /** `null` when the path is absent, `false` when it is not a regular file with one link. */
+  regularStat(path) {
+    const stat = lstatSync(path, { throwIfNoEntry: false });
+    if (!stat) return null;
+    return stat.isFile() && stat.nlink === 1 ? stat : false;
   }
   frames(dir) {
     return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && frameName.test(entry.name));
@@ -3597,19 +3611,26 @@ var IdentityDebugStore = class {
   logPath() {
     const dir = this.directory(false);
     if (!this.regularLog(dir)) throw new Error("Identity log unavailable");
-    return join2(dir, "attempts.jsonl");
+    return join2(dir, logName);
   }
   record(attemptId, event) {
     try {
-      const dir = this.directory(true), path = join2(dir, "attempts.jsonl");
-      const stat = lstatSync(path, { throwIfNoEntry: false });
-      if (stat && (!stat.isFile() || stat.nlink !== 1)) return;
+      const dir = this.directory(true), path = join2(dir, logName);
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-      writeFileSync2(
-        path,
-        JSON.stringify({ ...event, version: package_default.version, timestamp, attemptId }) + "\n",
-        { flag: stat ? "a" : "wx", mode: 384 }
-      );
+      const line = JSON.stringify({ ...event, version: package_default.version, timestamp, attemptId }) + "\n";
+      let stat = this.regularStat(path);
+      if (stat === false) return;
+      if (stat && stat.size + Buffer.byteLength(line) > this.maxLogBytes) {
+        const archived = join2(dir, previousLogName);
+        const previous = this.regularStat(archived);
+        if (previous === false) return;
+        if (previous) unlinkSync2(archived);
+        stat = this.regularStat(path);
+        if (!stat) return;
+        renameSync2(path, archived);
+        stat = null;
+      }
+      writeFileSync2(path, line, { flag: stat ? "a" : "wx", mode: 384 });
       this.hasLog = true;
     } catch {
     }
@@ -3618,7 +3639,8 @@ var IdentityDebugStore = class {
     const name = `frame-${attemptId}.png`;
     if (!frameName.test(name)) return null;
     try {
-      const path = join2(this.directory(true), name);
+      const dir = this.directory(true);
+      const path = join2(dir, name);
       const fd = openSync(path, "wx", 384);
       try {
         try {
@@ -3630,10 +3652,37 @@ var IdentityDebugStore = class {
         unlinkSync2(path);
         throw error;
       }
-      this.pendingFrames = true;
+      this.pruneFrames(dir, name);
       return name;
     } catch {
       return null;
+    }
+  }
+  pruneFrames(dir, keepName) {
+    try {
+      const ranked = [];
+      for (const entry of this.frames(dir)) {
+        const stat = lstatSync(join2(dir, entry.name), { throwIfNoEntry: false });
+        if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
+        ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
+      }
+      ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      let extras = ranked.length - this.maxFrames;
+      for (const item of ranked) {
+        if (extras <= 0) break;
+        if (item.name === keepName) continue;
+        extras--;
+        try {
+          const path = join2(dir, item.name);
+          const stat = lstatSync(path);
+          if (!stat.isFile() || stat.nlink !== 1) continue;
+          unlinkSync2(path);
+        } catch {
+        }
+      }
+      this.pendingFrames = this.frames(dir).length > 0;
+    } catch {
+      this.pendingFrames = true;
     }
   }
   clearFrames() {
@@ -3803,8 +3852,9 @@ var DeltaWorker = class {
 // src/screenshot-reveal.ts
 import { spawn } from "node:child_process";
 import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync as lstatSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync2, renameSync as renameSync2, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { lstatSync as lstatSync2, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync3, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+var revealName = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-(?:preview|full|crop)-[\da-f]{64}\.jpg$/;
 function openScreenshotInFolder(filePath) {
   const windows = process.platform === "win32";
   const command = windows ? join3(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe") : process.platform === "darwin" ? "/usr/bin/open" : "/usr/bin/xdg-open";
@@ -3833,7 +3883,7 @@ async function revealCapture(options, capture, part) {
     const temporary = join3(directory, `.${randomUUID2()}.tmp`);
     try {
       writeFileSync3(temporary, bytes, { flag: "wx", mode: 384 });
-      renameSync2(temporary, filePath);
+      renameSync3(temporary, filePath);
     } catch (error) {
       try {
         unlinkSync3(temporary);
@@ -3842,7 +3892,31 @@ async function revealCapture(options, capture, part) {
       throw error;
     }
   }
+  pruneRevealDirectory(directory, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
   await options.open(filePath);
+}
+function pruneRevealDirectory(directory, keepName, maxFiles) {
+  const ranked = [];
+  for (const entry of readdirSync2(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !revealName.test(entry.name)) continue;
+    const stat = lstatSync2(join3(directory, entry.name), { throwIfNoEntry: false });
+    if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
+    ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
+  }
+  ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  let extras = ranked.length - maxFiles;
+  for (const item of ranked) {
+    if (extras <= 0) break;
+    if (item.name === keepName) continue;
+    extras--;
+    try {
+      const path = join3(directory, item.name);
+      const stat = lstatSync2(path);
+      if (!stat.isFile() || stat.nlink !== 1) continue;
+      unlinkSync3(path);
+    } catch {
+    }
+  }
 }
 
 // src/startup-check.ts
