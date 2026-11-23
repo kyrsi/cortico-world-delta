@@ -11,14 +11,14 @@ import { CALIBRATION_PREVIEW_MS, calibrationRegions, sameCalibrationSource } fro
 import { captureRectangle } from './roi.ts';
 import { DELTA_DEFAULTS, deltaConfigGroups, type DeltaConfigSection } from './config.ts';
 import { DELTA_CONTROL_INTERVAL_MS, DELTA_MAX_HISTORY, DELTA_MAX_JPEG_BYTES } from './limits.ts';
-import { calibrationFitsBudget, detectionStatus, matchesCalibration } from './detector.ts';
+import { detectionStatus, matchesCalibration } from './detector.ts';
 import { deltaText } from './i18n/index.ts';
 import { observationText } from './model-text.ts';
 import { KnowledgeStore } from './knowledge-store.ts';
 import { IdentityDebugStore } from './identity-debug.ts';
-import { validIdentityNickname } from './profile-identity.ts';
 import { selectKnowledge } from './knowledge.ts';
-import { evaluateSpeech, validateSpeechConfig } from './speech.ts';
+import { evaluateSpeech } from './speech.ts';
+import { invokePanel, type DeltaPanelHost } from './panel-rpc.ts';
 import { DeltaWorker, runCalibrationOperation } from './proxy.ts';
 import { openScreenshotInFolder, revealCapture, type ScreenshotReveal } from './screenshot-reveal.ts';
 import { startupCheck } from './startup-check.ts';
@@ -26,8 +26,8 @@ import { windowsCalibrationHotkey } from './standalone-hotkey.ts';
 import { PersonalNotificationTracker, validPersonalSignature } from './personal-notification.ts';
 import { LootItemTracker, lootCalibrationFitsBudget, lootNamespace, lootStatus, validLootSignature } from './loot-detector.ts';
 import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaCapture, IdentityProgressSink } from './engine-ipc.ts';
-import { DEFAULT_GAME_ASPECT_RATIO, isGameAspectRatio, type DeltaCalibrationRegions, type DeltaGameAspectRatio, type DeltaQuickSetupRequest } from './protocol.ts';
-import type { DeltaBindingSnapshot, DeltaCalibrationApplyRequest, DeltaCalibrationHotkeyState, DeltaCalibrationSuggestion, DeltaDetectionConfigureRequest, DeltaDetectionState, DeltaDropReason, DeltaEvent, DeltaIntent, DeltaKnowledgeImportRequest, DeltaLootConfig, DeltaLootConfigureRequest, DeltaLootState, DeltaProductBinding, DeltaReason, DeltaRoi, DeltaScreenshotRevealRequest, DeltaSimulateRequest, DeltaSimulationReceipt, DeltaSpeechConfig, DeltaState } from './protocol.ts';
+import { DEFAULT_GAME_ASPECT_RATIO, isGameAspectRatio, type DeltaCalibrationRegions, type DeltaGameAspectRatio } from './protocol.ts';
+import type { DeltaBindingSnapshot, DeltaCalibrationApplyRequest, DeltaCalibrationHotkeyState, DeltaCalibrationSuggestion, DeltaDetectionState, DeltaDropReason, DeltaEvent, DeltaIntent, DeltaLootConfig, DeltaLootState, DeltaProductBinding, DeltaReason, DeltaSimulateRequest, DeltaSimulationReceipt, DeltaSpeechConfig, DeltaState } from './protocol.ts';
 
 interface Evidence { full: Uint8Array; crop: Uint8Array }
 interface Simulation { id: string; resolve(receipt: DeltaSimulationReceipt): void; timer: NodeJS.Timeout }
@@ -803,173 +803,57 @@ export class DeltaWorld implements World {
     if (preview.attemptId) this.clearCalibrationHotkeyAttempt();
     return this.state();
   }
+  private panelHost(errors: DeltaPanelHost['errors']): DeltaPanelHost {
+    return {
+      errors,
+      identitySuggest: () => this.identitySuggest(),
+      openIdentityLog: () => {
+        if (!this.screenshotReveal) throw new Error(errors.unavailable);
+        return Promise.resolve(this.screenshotReveal.open(this.identityDebug.logPath()));
+      },
+      saveIdentity: (nickname) => {
+        this.options.persist({ detection: { nickname: nickname.trim() } });
+        this.identitySaveRevision++;
+        if (this.calibrationRequest?.kind === 'identity-suggest') this.calibrationRequest.controller.abort('id-saved');
+        this.identityDebug.clearFrames();
+        return this.state();
+      },
+      persist: (patch) => { this.options.persist(patch); },
+      state: () => this.state(),
+      readKnowledge: () => this.knowledge.read(),
+      importKnowledge: (name, content) => { this.knowledge.import(name, content); },
+      reloadKnowledge: () => { this.knowledge.reload(); },
+      restoreKnowledge: () => { this.knowledge.restore(); },
+      listStandaloneDisplays: () => this.listStandaloneDisplays(errors.unavailable),
+      authorizeStandalone: (displayId, calibrationOnly) => this.authorizeStandalone(displayId, calibrationOnly, errors.unavailable),
+      cancelCalibration: () => { this.revokeCalibrationGrant(); return this.state(); },
+      hasBinding: () => !!this.binding,
+      setIntent: (intent) => this.setIntent(intent, errors.unavailable),
+      reconcile: () => { this.reconcile(); },
+      previewForSave: (frameId) => this.previewForSave(frameId),
+      calibrationSource: (capture) => ({ display: capture.frame.display, topologyRevision: capture.frame.topologyRevision, gameAspectRatio: this.gameAspectRatio() }),
+      clearManualPreview: () => { this.preview = null; },
+      calibrationSuggest: () => this.calibrationSuggest(),
+      calibrationApply: (request) => this.calibrationApply(request, errors.invalidRequest, errors.unavailable),
+      dismissCalibration: (attemptId) => {
+        if (this.calibrationHotkeyAttempt?.id === attemptId) this.clearCalibrationHotkeyAttempt();
+        return this.state();
+      },
+      detectionPreview: () => this.detectionPreview(errors.unavailable),
+      readablePreview: (frameId) => this.readablePreview(frameId),
+      readableEventCapture: (eventId, part) => this.readableEventCapture(eventId, part),
+      canReveal: () => this.screenshotReveal !== null,
+      reveal: (capture, part) => {
+        if (!this.screenshotReveal) throw new Error(errors.unavailable);
+        return Promise.resolve(revealCapture(this.screenshotReveal, capture, part));
+      },
+      savedPersonalFeedback: () => !!this.options.cfg.detection.calibration?.personalFeedbackRoi,
+      simulate: (request) => this.simulate(request, errors.unavailable),
+    };
+  }
   webUi(language: Language = 'zh'): WorldWebUiDecl {
-    const t = deltaText(language);
+    const t = deltaText(language), host = this.panelHost(t.errors);
     return { label: t.title, panels: [{ id: 'observer', title: t.panel }], config: deltaConfigGroups(language, !!this.binding, !!this.binding || process.platform === 'win32'),
-      invoke: async (panel, method, args) => {
-        if (panel !== 'observer') throw new Error(t.errors.unknownMethod);
-        if (method === 'identitySuggest') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          return this.identitySuggest();
-        }
-        if (method === 'identityDebugReveal') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          if (!this.screenshotReveal) throw new Error(t.errors.unavailable);
-          try { await this.screenshotReveal.open(this.identityDebug.logPath()); }
-          catch { throw new Error(t.errors.unavailable); }
-          return { ok: true };
-        }
-        if (method === 'identitySave') {
-          if (args.length !== 1 || !validIdentityNickname(args[0])) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ detection: { nickname: args[0].trim() } });
-          this.identitySaveRevision++;
-          if (this.calibrationRequest?.kind === 'identity-suggest') this.calibrationRequest.controller.abort('id-saved');
-          this.identityDebug.clearFrames();
-          return this.state();
-        }
-        if (method === 'calibrationAspectRatioConfigure') {
-          if (args.length !== 1 || !isGameAspectRatio(args[0])) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ gameAspectRatio: args[0] });
-          return this.state();
-        }
-        if (method === 'speechConfigure') {
-          if (args.length !== 1 || !validateSpeechConfig(args[0])) throw new Error(t.errors.invalidRequest);
-          const request = args[0];
-          this.options.persist({ speech: { enabled: request.enabled, probability: request.probability, cooldownMs: request.cooldownMs, style: request.style,
-            events: { kill: request.eventKinds.includes('kill'), knockdown: request.eventKinds.includes('knockdown'), loot: request.eventKinds.includes('loot') },
-            attribution: { self: request.relations.includes('self'), teammate: request.relations.includes('teammate'), unknown: request.relations.includes('unknown') } } });
-          return this.state();
-        }
-        if (['knowledgeRead', 'knowledgeImport', 'knowledgeReload', 'knowledgeRestore'].includes(method)) {
-          if (method === 'knowledgeImport' ? args.length !== 1 : args.length !== 0) throw new Error(t.errors.invalidRequest);
-          if (method === 'knowledgeRead') return this.knowledge.read();
-          try {
-            if (method === 'knowledgeImport') {
-              const request = args[0] as DeltaKnowledgeImportRequest | null;
-              if (!request || typeof request !== 'object' || typeof request.name !== 'string' || typeof request.content !== 'string') throw new Error('knowledge-invalid');
-              this.knowledge.import(request.name, request.content);
-            } else if (method === 'knowledgeReload') this.knowledge.reload();
-            else this.knowledge.restore();
-          } catch (error) {
-            const code = error instanceof Error ? error.message : '';
-            const messages: Record<string, string> = { 'knowledge-invalid': t.errors.knowledgeInvalid, 'knowledge-too-large': t.errors.knowledgeTooLarge,
-              'knowledge-unavailable': t.errors.knowledgeUnavailable, 'knowledge-read-failed': t.errors.knowledgeReadFailed, 'knowledge-write-failed': t.errors.knowledgeWriteFailed };
-            throw new Error(messages[code] ?? t.errors.knowledgeReadFailed);
-          }
-          return this.state();
-        }
-        if (method === 'listStandaloneDisplays') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          return this.listStandaloneDisplays(t.errors.unavailable);
-        }
-        if (method === 'startStandalone' || method === 'prepareCalibration') {
-          const displayId = args[0];
-          if (args.length !== 1 || typeof displayId !== 'string' || !displayId.trim() || displayId.length > 1024) throw new Error(t.errors.invalidRequest);
-          return this.authorizeStandalone(displayId, method === 'prepareCalibration', t.errors.unavailable);
-        }
-        if (method === 'cancelCalibration') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          this.revokeCalibrationGrant();
-          return this.state();
-        }
-        if (method === 'quickSetupConfigure') {
-          const request = args[0] as DeltaQuickSetupRequest | undefined;
-          if (args.length !== 1 || !request || typeof request.combat !== 'boolean' || typeof request.loot !== 'boolean'
-            || !(request.combat || request.loot) || !['zh-CN', 'en-US'].includes(request.language)) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ detection: { enabled: request.combat, ...(request.combat && { language: request.language }) },
-            loot: { enabled: request.loot, ...(request.loot && { language: request.language }) } });
-          return this.state();
-        }
-        if (['state', 'start', 'pause', 'stop'].includes(method)) {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          if (method === 'state') return this.state();
-          if (method === 'start' && !this.binding) throw new Error(t.errors.unavailable);
-          return this.setIntent(method === 'start' ? 'running' : method === 'pause' ? 'paused' : 'stopped', t.errors.unavailable);
-        }
-        if (method === 'detectionConfigure') {
-          const request = args[0] as DeltaDetectionConfigureRequest | null;
-          if (args.length !== 1 || !request || typeof request !== 'object' || typeof request.enabled !== 'boolean'
-            || typeof request.nickname !== 'string' || request.nickname.length > 64 || !['', 'zh-CN', 'en-US'].includes(request.language)) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ detection: { enabled: request.enabled, nickname: request.nickname.trim(), language: request.language } });
-          this.reconcile(); return this.state();
-        }
-        if (method === 'lootConfigure') {
-          const request = args[0] as DeltaLootConfigureRequest | null;
-          if (args.length !== 1 || !request || typeof request !== 'object' || typeof request.enabled !== 'boolean'
-            || !['', 'zh-CN', 'en-US'].includes(request.language) || !['conservative', 'balanced', 'sensitive'].includes(request.sensitivity)) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ loot: { enabled: request.enabled, language: request.language, sensitivity: request.sensitivity } });
-          this.reconcile(); return this.state();
-        }
-        if (method === 'lootCalibrate') {
-          const preview = await this.previewForSave(args[0]), itemsRoi = args[1] as DeltaRoi, contextRoi = args[2] as DeltaRoi;
-          if (args.length !== 3 || !preview || !itemsRoi || !contextRoi) throw new Error(t.errors.invalidRequest);
-          const calibration = { display: preview.frame.display, topologyRevision: preview.frame.topologyRevision, gameAspectRatio: this.gameAspectRatio(), itemsRoi, contextRoi };
-          if (!lootCalibrationFitsBudget(calibration)) throw new Error(t.errors.invalidRequest);
-          this.options.persist({ loot: { calibration } }); this.preview = null; this.reconcile(); return this.state();
-        }
-        if (method === 'calibrationSuggest') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          return this.calibrationSuggest();
-        }
-        if (method === 'calibrationApply') {
-          const request = args[0] as DeltaCalibrationApplyRequest | null;
-          if (args.length !== 1 || !request || typeof request.frameId !== 'string') throw new Error(t.errors.invalidRequest);
-          return this.calibrationApply(request, t.errors.invalidRequest, t.errors.unavailable);
-        }
-        if (method === 'calibrationDismiss') {
-          if (args.length !== 1 || typeof args[0] !== 'string') throw new Error(t.errors.invalidRequest);
-          if (this.calibrationHotkeyAttempt?.id === args[0]) this.clearCalibrationHotkeyAttempt();
-          return this.state();
-        }
-        if (method === 'detectionPreview') {
-          if (args.length) throw new Error(t.errors.invalidRequest);
-          return this.detectionPreview(t.errors.unavailable);
-        }
-        if (method === 'detectionPreviewImage') {
-          if (args.length !== 1) throw new Error(t.errors.invalidRequest);
-          const preview = this.readablePreview(args[0]);
-          if (!preview) throw new Error(t.errors.imageUnavailable);
-          return { $binary: { mime: 'image/jpeg', base64: Buffer.from(preview.jpeg).toString('base64') } };
-        }
-        if (method === 'revealScreenshot') {
-          const request = args[0] as DeltaScreenshotRevealRequest | null;
-          if (args.length !== 1 || !request || typeof request !== 'object' || typeof request.frameId !== 'string'
-            || (request.kind !== 'preview' && request.kind !== 'event')
-            || (request.kind === 'event' && (typeof request.eventId !== 'string' || (request.part !== 'full' && request.part !== 'crop')))) {
-            throw new Error(t.errors.invalidRequest);
-          }
-          const capture = request.kind === 'preview' ? this.readablePreview(request.frameId) : this.readableEventCapture(request.eventId, request.part);
-          if (!capture || capture.frame.frameId !== request.frameId) throw new Error(t.errors.imageUnavailable);
-          if (!this.screenshotReveal) throw new Error(t.errors.unavailable);
-          try { await revealCapture(this.screenshotReveal, capture, request.kind === 'preview' ? 'preview' : request.part); }
-          catch { throw new Error(t.errors.unavailable); }
-          return {};
-        }
-        if (method === 'detectionCalibrate') {
-          const roi = args[1] as DeltaRoi | null, personalFeedbackRoi = args[2] as DeltaRoi | null | undefined, preview = await this.previewForSave(args[0]);
-          if ((args.length !== 2 && args.length !== 3) || !preview || !roi
-            || (personalFeedbackRoi !== undefined && personalFeedbackRoi !== null && typeof personalFeedbackRoi !== 'object')) throw new Error(t.errors.invalidRequest);
-          const calibration = { display: preview.frame.display, topologyRevision: preview.frame.topologyRevision, gameAspectRatio: this.gameAspectRatio(), roi,
-            ...(args.length === 3 || this.options.cfg.detection.calibration?.personalFeedbackRoi ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}) };
-          try { if (!calibrationFitsBudget(calibration)) throw new Error(t.errors.invalidRequest); }
-          catch { throw new Error(t.errors.invalidRequest); }
-          this.options.persist({ detection: { calibration } });
-          this.preview = null; this.reconcile(); return this.state();
-        }
-        if (method === 'simulate') {
-          const request = args[0] as DeltaSimulateRequest | null;
-          if (args.length !== 1 || !request || typeof request !== 'object' || !['kill', 'knockdown', 'loot'].includes(request.kind)
-            || (request.dedupKey !== undefined && (typeof request.dedupKey !== 'string' || !request.dedupKey.trim() || request.dedupKey.length > 200))) throw new Error(t.errors.invalidRequest);
-          return this.simulate(request, t.errors.unavailable);
-        }
-        if (method === 'eventImage') {
-          const [eventId, part] = args;
-          if (args.length !== 2 || typeof eventId !== 'string' || (part !== 'full' && part !== 'crop')) throw new Error(t.errors.invalidRequest);
-          const capture = this.readableEventCapture(eventId, part);
-          if (!capture) throw new Error(t.errors.imageUnavailable);
-          return { $binary: { mime: 'image/jpeg', base64: Buffer.from(capture.jpeg).toString('base64') } };
-        }
-        throw new Error(t.errors.unknownMethod);
-      } };
+      invoke: (panel, method, args) => invokePanel(host, panel, method, args) };
   }
 }
