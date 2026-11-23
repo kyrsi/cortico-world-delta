@@ -15,3 +15,9 @@ export const DELTA_KNOWLEDGE_MAX_BYTES = 65_536;
 export const DELTA_KNOWLEDGE_MAX_CHARACTERS = 48_000;
 export const DELTA_KNOWLEDGE_MAX_SECTIONS = 64;
 export const DELTA_KNOWLEDGE_CONTEXT_MAX_CHARACTERS = 6000;
+/** Consecutive transient OCR failures before a detector reports an error. */
+export const DELTA_OCR_TRANSIENT_FAILURE_LIMIT = 3;
+/** Delay before the next OCR attempt. `failures` is the consecutive count, starting at 1. */
+export function deltaOcrBackoffMs(failures: number): number {
+  return Math.min(4_000, 1_000 * 2 ** Math.max(0, failures - 1));
+}

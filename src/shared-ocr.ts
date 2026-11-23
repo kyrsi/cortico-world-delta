@@ -1,5 +1,5 @@
 /** One worker-owned OCR helper serializes combat and item-interface requests. */
-import { createOcr, type DeltaOcrPort } from './ocr.ts';
+import { createOcr, ocrProcessGone, type DeltaOcrPort } from './ocr.ts';
 import type { DeltaGameLanguage } from './protocol.ts';
 
 export class SharedOcr {
@@ -9,12 +9,13 @@ export class SharedOcr {
   private closed = false;
   private leases = 0;
   private retiring: Promise<void> | null = null;
+  constructor(private readonly openPort: typeof createOcr = createOcr) {}
   async open(language: DeltaGameLanguage): Promise<DeltaOcrPort> {
     if (this.closed) throw new Error('OCR service stopped');
     if (this.retiring) await this.retiring;
     if (this.closed) throw new Error('OCR service stopped');
     if (this.port && language !== this.language) throw new Error('OCR language conflict');
-    if (!this.port) { this.language = language; this.port = createOcr(language); }
+    if (!this.port) { this.language = language; this.port = this.openPort(language); }
     const owned = this.port;
     this.leases++;
     let port: DeltaOcrPort;
@@ -24,12 +25,16 @@ export class SharedOcr {
       throw error;
     }
     if (this.closed || this.port !== owned) throw new Error('OCR service stopped');
+    void port.exited.then(() => { if (this.port === owned) void this.retire(owned); });
     let released = false, release: Promise<void> | null = null;
     const recognizeLayout: DeltaOcrPort['recognizeLayout'] = (region) => {
       if (released || this.closed || this.port !== owned) return Promise.reject(new Error('OCR lease closed'));
       const request = this.tail.catch(() => {}).then(() => {
         if (released || this.closed || this.port !== owned) throw new Error('OCR lease closed');
         return port.recognizeLayout(region);
+      }).then((layout) => layout, (error: unknown) => {
+        if (this.port === owned && ocrProcessGone(error)) void this.retire(owned);
+        throw error;
       });
       this.tail = request;
       return request;
@@ -47,6 +52,7 @@ export class SharedOcr {
     } };
   }
   private retire(owned: Promise<DeltaOcrPort>): Promise<void> {
+    if (this.port !== owned) return this.retiring ?? Promise.resolve();
     this.port = null; this.language = ''; this.leases = 0;
     const work = this.tail;
     const retirement = (async () => {

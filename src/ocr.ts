@@ -16,9 +16,19 @@ export interface DeltaOcrPort {
   pid: number;
   availableLanguages: string[];
   language: string | null;
+  /** Resolves when the OCR process has exited. */
+  exited: Promise<void>;
   recognize(region: CapturedRegion): Promise<readonly string[]>;
   recognizeLayout(region: CapturedRegion): Promise<DeltaOcrLayout>;
   close(): Promise<void>;
+}
+const OCR_PLATFORM_UNAVAILABLE = 'Windows OCR is unavailable on this platform';
+export function ocrUnavailableOnPlatform(error: unknown): boolean {
+  return error instanceof Error && error.message === OCR_PLATFORM_UNAVAILABLE;
+}
+export function ocrProcessGone(error: unknown): boolean {
+  return error instanceof Error && (error.message === 'Windows OCR timed out' || error.message === 'Windows OCR exited'
+    || error.message === 'Windows OCR is closed' || error.message === 'Windows OCR stopped');
 }
 
 const script = String.raw`
@@ -120,7 +130,7 @@ function parseLayout(value: Record<string, unknown>, region: CapturedRegion): De
 }
 
 export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPort> {
-  if (process.platform !== 'win32') throw new Error('Windows OCR is unavailable on this platform');
+  if (process.platform !== 'win32') throw new Error(OCR_PLATFORM_UNAVAILABLE);
   const source = script.replace('__LANGUAGE__', language).replace('__PARENT_PID__', String(process.pid))
     .replaceAll('__MAX_LINES__', String(DELTA_OCR_LIMITS.maxLines)).replaceAll('__MAX_WORDS__', String(DELTA_OCR_LIMITS.maxWords))
     .replaceAll('__MAX_LINE_CHARS__', String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll('__MAX_WORD_CHARS__', String(DELTA_OCR_LIMITS.maxWordChars));
@@ -128,6 +138,8 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
   const child: ChildProcessWithoutNullStreams = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let closed = false;
+  let markExited = () => {};
+  const exited = new Promise<void>((resolve) => { markExited = resolve; });
   let pending: { resolve(value: Record<string, unknown>): void; reject(error: Error): void; timer: NodeJS.Timeout } | null = null;
   const fail = (error: Error) => { if (pending) { clearTimeout(pending.timer); pending.reject(error); pending = null; } };
   const response = (timeoutMs: number) => new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -145,13 +157,13 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
   child.stderr.on('data', () => {});
   child.stdin.on('error', (error) => fail(error));
   child.on('error', (error) => fail(error));
-  child.on('exit', () => { closed = true; fail(new Error('Windows OCR exited')); });
+  child.on('exit', () => { closed = true; markExited(); fail(new Error('Windows OCR exited')); });
   const close = async () => {
     if (closed) return;
     closed = true; fail(new Error('Windows OCR stopped')); lines.close(); child.stdin.end();
-    const exited = new Promise<void>((done) => child.once('exit', () => done()));
+    const stopped = new Promise<void>((done) => child.once('exit', () => done()));
     const timer = setTimeout(() => child.kill(), 250);
-    await Promise.race([exited, new Promise<void>((done) => setTimeout(done, 500))]);
+    await Promise.race([stopped, new Promise<void>((done) => setTimeout(done, 500))]);
     clearTimeout(timer); if (child.exitCode === null) child.kill();
   };
   let ready: Record<string, unknown>;
@@ -166,7 +178,7 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
       return parseLayout(value, region);
   };
   return { pid: child.pid!, availableLanguages: Array.isArray(ready.availableLanguages) ? ready.availableLanguages.map(String) : [],
-    language: typeof ready.language === 'string' ? ready.language : null, recognizeLayout,
+    language: typeof ready.language === 'string' ? ready.language : null, exited, recognizeLayout,
     async recognize(region) {
       const layout = await recognizeLayout(region);
       if (layout.truncated) throw new Error('Windows OCR layout exceeds result limits');

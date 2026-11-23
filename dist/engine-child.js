@@ -2220,9 +2220,20 @@ var DELTA_LOOT_SAMPLE_INTERVAL_MS = 2e3;
 var DELTA_MAX_LOOT_CANDIDATES = 4;
 var DELTA_MAX_LOOT_REFERENCES = 32;
 var DELTA_LOOT_RETAIN_MS = 6e4;
+var DELTA_OCR_TRANSIENT_FAILURE_LIMIT = 3;
+function deltaOcrBackoffMs(failures) {
+  return Math.min(4e3, 1e3 * 2 ** Math.max(0, failures - 1));
+}
 
 // src/ocr.ts
 var DELTA_OCR_LIMITS = { maxLines: 64, maxWords: 512, maxLineChars: 1024, maxWordChars: 128 };
+var OCR_PLATFORM_UNAVAILABLE = "Windows OCR is unavailable on this platform";
+function ocrUnavailableOnPlatform(error) {
+  return error instanceof Error && error.message === OCR_PLATFORM_UNAVAILABLE;
+}
+function ocrProcessGone(error) {
+  return error instanceof Error && (error.message === "Windows OCR timed out" || error.message === "Windows OCR exited" || error.message === "Windows OCR is closed" || error.message === "Windows OCR stopped");
+}
 var script = String.raw`
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
@@ -2326,7 +2337,7 @@ function parseLayout(value, region) {
   return result;
 }
 async function createOcr(language) {
-  if (process.platform !== "win32") throw new Error("Windows OCR is unavailable on this platform");
+  if (process.platform !== "win32") throw new Error(OCR_PLATFORM_UNAVAILABLE);
   const source2 = script.replace("__LANGUAGE__", language).replace("__PARENT_PID__", String(process.pid)).replaceAll("__MAX_LINES__", String(DELTA_OCR_LIMITS.maxLines)).replaceAll("__MAX_WORDS__", String(DELTA_OCR_LIMITS.maxWords)).replaceAll("__MAX_LINE_CHARS__", String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll("__MAX_WORD_CHARS__", String(DELTA_OCR_LIMITS.maxWordChars));
   const command = Buffer.from(source2, "utf16le").toString("base64");
   const child = spawn(
@@ -2335,6 +2346,11 @@ async function createOcr(language) {
     { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
   let closed = false;
+  let markExited = () => {
+  };
+  const exited = new Promise((resolve) => {
+    markExited = resolve;
+  });
   let pending = null;
   const fail = (error) => {
     if (pending) {
@@ -2372,6 +2388,7 @@ async function createOcr(language) {
   child.on("error", (error) => fail(error));
   child.on("exit", () => {
     closed = true;
+    markExited();
     fail(new Error("Windows OCR exited"));
   });
   const close = async () => {
@@ -2380,9 +2397,9 @@ async function createOcr(language) {
     fail(new Error("Windows OCR stopped"));
     lines.close();
     child.stdin.end();
-    const exited = new Promise((done) => child.once("exit", () => done()));
+    const stopped2 = new Promise((done) => child.once("exit", () => done()));
     const timer = setTimeout(() => child.kill(), 250);
-    await Promise.race([exited, new Promise((done) => setTimeout(done, 500))]);
+    await Promise.race([stopped2, new Promise((done) => setTimeout(done, 500))]);
     clearTimeout(timer);
     if (child.exitCode === null) child.kill();
   };
@@ -2407,6 +2424,7 @@ async function createOcr(language) {
     pid: child.pid,
     availableLanguages: Array.isArray(ready.availableLanguages) ? ready.availableLanguages.map(String) : [],
     language: typeof ready.language === "string" ? ready.language : null,
+    exited,
     recognizeLayout,
     async recognize(region) {
       const layout = await recognizeLayout(region);
@@ -2802,17 +2820,19 @@ function fingerprint(region) {
   return result;
 }
 var Detector = class {
-  constructor(config, evidence, confirmed, openOcr = createOcr) {
+  constructor(config, evidence, confirmed, openOcr = createOcr, backoffMs = deltaOcrBackoffMs) {
     this.config = config;
     this.evidence = evidence;
     this.confirmed = confirmed;
     this.openOcr = openOcr;
+    this.backoffMs = backoffMs;
     this.status = detectionStatus(config);
   }
   config;
   evidence;
   confirmed;
   openOcr;
+  backoffMs;
   status;
   ocr = null;
   pending = null;
@@ -2820,6 +2840,9 @@ var Detector = class {
   closed = false;
   previous = null;
   lastScanAtMs = 0;
+  failures = 0;
+  inflight = null;
+  backoffCancel = null;
   submit(region) {
     if (this.closed || !this.config.enabled || !this.config.nickname.trim() || !this.config.language || !this.config.calibration || this.status.reason === "roi-too-large" || this.status.reason === "feedback-language-unsupported") return;
     if (!matchesCalibration(region, this.config.calibration)) {
@@ -2827,6 +2850,7 @@ var Detector = class {
       this.status.reason = "source-changed";
       this.pending = null;
       this.previous = null;
+      this.backoffCancel?.();
       void this.ocr?.close();
       return;
     }
@@ -2839,6 +2863,25 @@ var Detector = class {
     }
   }
   async drain() {
+    while (!this.closed && this.status.phase !== "error" && this.status.phase !== "unavailable" && this.status.reason !== "source-changed") {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = "unavailable";
+          this.status.reason = "ocr-unavailable";
+          this.status.lastError = String(error);
+          this.pending = null;
+          this.inflight = null;
+          return;
+        }
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  async scan() {
     try {
       if (!this.ocr) {
         this.ocr = await this.openOcr(this.config.language);
@@ -2870,7 +2913,9 @@ var Detector = class {
         if (difference / next.length < 1.5) continue;
         this.previous = next;
         this.lastScanAtMs = Date.now();
+        this.inflight = region;
         const initial = await this.recognize(region);
+        this.inflight = null;
         if (this.closed || this.status.reason === "source-changed") return;
         this.status.scans++;
         this.status.phase = "ready";
@@ -2902,18 +2947,51 @@ var Detector = class {
         }
       }
     } catch (error) {
-      if (!this.closed && this.status.reason !== "source-changed") {
-        this.status.phase = this.ocr ? "error" : "unavailable";
-        this.status.reason = this.ocr ? null : "ocr-unavailable";
-        this.status.lastError = String(error);
-        this.pending = null;
-        await this.ocr?.close();
-      }
+      if (this.inflight && !this.pending) this.pending = this.inflight;
+      throw error;
     }
+  }
+  async noteTransient(error) {
+    const port = this.ocr;
+    this.ocr = null;
+    this.previous = null;
+    this.inflight = null;
+    this.failures++;
+    this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) {
+      this.status.phase = "starting";
+      this.status.reason = null;
+    } else {
+      this.status.phase = "error";
+      this.status.reason = null;
+      this.pending = null;
+    }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  waitBackoff(ms) {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.backoffCancel = null;
+        resolve();
+      }, ms);
+      this.backoffCancel = () => {
+        clearTimeout(timer);
+        this.backoffCancel = null;
+        resolve();
+      };
+    });
   }
   async recognize(region, verify = false) {
     if (this.recognitionStopped()) return [];
-    const layout = await this.ocr.recognizeLayout(region), raw = this.matches(layout);
+    const layout = await this.ocr.recognizeLayout(region);
+    this.failures = 0;
+    this.status.lastError = null;
+    const raw = this.matches(layout);
     const finish = (matches2) => matches2.map((match) => match.personalAction ? { ...match, personalSignature: createPersonalSignature(region, match.personalAction, match.personalTarget) } : match);
     if (!this.config.calibration?.personalFeedbackRoi || this.config.language !== "zh-CN") return finish(raw);
     const layouts = [layout], matches = raw;
@@ -2954,6 +3032,7 @@ var Detector = class {
   async close() {
     this.closed = true;
     this.pending = null;
+    this.backoffCancel?.();
     await this.ocr?.close();
     await this.running;
   }
@@ -3201,17 +3280,21 @@ function evidenceRegions(evidence, calibration) {
   }, context: extract(calibration.contextRoi) };
 }
 var LootDetector = class {
-  constructor(config, evidence, candidate, openOcr = createOcr, combat) {
+  constructor(config, evidence, candidate, openOcr = createOcr, combat, backoffMs = deltaOcrBackoffMs, sampleIntervalMs = DELTA_LOOT_SAMPLE_INTERVAL_MS) {
     this.config = config;
     this.evidence = evidence;
     this.candidate = candidate;
     this.openOcr = openOcr;
+    this.backoffMs = backoffMs;
+    this.sampleIntervalMs = sampleIntervalMs;
     this.status = lootStatus(config, combat);
   }
   config;
   evidence;
   candidate;
   openOcr;
+  backoffMs;
+  sampleIntervalMs;
   status;
   visible = [];
   pending = null;
@@ -3221,12 +3304,15 @@ var LootDetector = class {
   tracker = new LootItemTracker();
   ocr = null;
   lastScanAtMs = 0;
+  failures = 0;
+  backoffCancel = null;
   submit(region) {
     if (this.closed || !this.config.enabled || !this.config.calibration || this.status.phase === "unavailable" || this.status.phase === "error" || this.status.reason) return;
     if (!matchesCalibration(region, { ...this.config.calibration, roi: this.config.calibration.itemsRoi })) {
       this.status.phase = "uncalibrated";
       this.status.reason = "source-changed";
       this.clearVisible();
+      this.backoffCancel?.();
       void this.ocr?.close();
       return;
     }
@@ -3242,15 +3328,33 @@ var LootDetector = class {
     this.status.scene = null;
   }
   async drain() {
-    try {
-      while (this.pending && !this.closed) {
-        if (Date.now() - this.lastScanAtMs < DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          await new Promise((done) => setTimeout(done, 50));
-          continue;
+    while (!this.recognitionStopped() && this.status.phase !== "error" && this.status.phase !== "unavailable") {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = "unavailable";
+          this.status.reason = "ocr-unavailable";
+          this.status.lastError = String(error);
+          this.clearVisible();
+          return;
         }
-        const region = this.pending;
-        this.pending = null;
-        this.lastScanAtMs = Date.now();
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  async scan() {
+    while (this.pending && !this.closed) {
+      if (Date.now() - this.lastScanAtMs < this.sampleIntervalMs) {
+        await new Promise((done) => setTimeout(done, 50));
+        continue;
+      }
+      const region = this.pending;
+      this.pending = null;
+      this.lastScanAtMs = Date.now();
+      try {
         const candidates = detectLootItems(region, this.config.sensitivity), now = Date.now(), calibration = this.config.calibration;
         const namespace = lootNamespace(region, calibration);
         this.visible = candidates.map((item) => item.signature);
@@ -3290,6 +3394,8 @@ var LootDetector = class {
           return;
         }
         const layout = await this.ocr.recognizeLayout(parts.context);
+        this.failures = 0;
+        this.status.lastError = null;
         if (this.recognitionStopped()) {
           await this.ocr.close();
           return;
@@ -3309,16 +3415,44 @@ var LootDetector = class {
             recognition: { kind: "loot-candidate", text, target: "", scene, basis: "red-grid-ui", quality: "unconfirmed", itemName: null }
           });
         }
+      } catch (error) {
+        if (!this.pending) this.pending = region;
+        throw error;
       }
-    } catch (error) {
-      if (!this.recognitionStopped()) {
-        this.status.phase = this.ocr ? "error" : "unavailable";
-        this.status.reason = this.ocr ? null : "ocr-unavailable";
-        this.status.lastError = String(error);
-        this.clearVisible();
-      }
-      await this.ocr?.close();
     }
+  }
+  async noteTransient(error) {
+    const port = this.ocr;
+    this.ocr = null;
+    this.failures++;
+    this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) {
+      this.status.phase = "starting";
+      this.status.reason = null;
+    } else {
+      this.status.phase = "error";
+      this.status.reason = null;
+      this.clearVisible();
+    }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  waitBackoff(ms) {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.backoffCancel = null;
+        resolve();
+      }, ms);
+      this.backoffCancel = () => {
+        clearTimeout(timer);
+        this.backoffCancel = null;
+        resolve();
+      };
+    });
   }
   recognitionStopped() {
     return this.closed || this.status.reason === "source-changed";
@@ -3326,6 +3460,7 @@ var LootDetector = class {
   async close() {
     this.closed = true;
     this.clearVisible();
+    this.backoffCancel?.();
     await this.ocr?.close();
     await this.running;
   }
@@ -4376,6 +4511,10 @@ var DELTA_DEFAULTS = {
 
 // src/shared-ocr.ts
 var SharedOcr = class {
+  constructor(openPort = createOcr) {
+    this.openPort = openPort;
+  }
+  openPort;
   port = null;
   language = "";
   tail = Promise.resolve();
@@ -4389,7 +4528,7 @@ var SharedOcr = class {
     if (this.port && language !== this.language) throw new Error("OCR language conflict");
     if (!this.port) {
       this.language = language;
-      this.port = createOcr(language);
+      this.port = this.openPort(language);
     }
     const owned = this.port;
     this.leases++;
@@ -4404,6 +4543,9 @@ var SharedOcr = class {
       throw error;
     }
     if (this.closed || this.port !== owned) throw new Error("OCR service stopped");
+    void port.exited.then(() => {
+      if (this.port === owned) void this.retire(owned);
+    });
     let released = false, release = null;
     const recognizeLayout = (region) => {
       if (released || this.closed || this.port !== owned) return Promise.reject(new Error("OCR lease closed"));
@@ -4411,6 +4553,9 @@ var SharedOcr = class {
       }).then(() => {
         if (released || this.closed || this.port !== owned) throw new Error("OCR lease closed");
         return port.recognizeLayout(region);
+      }).then((layout) => layout, (error) => {
+        if (this.port === owned && ocrProcessGone(error)) void this.retire(owned);
+        throw error;
       });
       this.tail = request;
       return request;
@@ -4428,6 +4573,7 @@ var SharedOcr = class {
     } };
   }
   retire(owned) {
+    if (this.port !== owned) return this.retiring ?? Promise.resolve();
     this.port = null;
     this.language = "";
     this.leases = 0;

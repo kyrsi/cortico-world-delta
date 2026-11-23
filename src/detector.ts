@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { sameDeltaDisplay } from './protocol.ts';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { captureRectangle } from './roi.ts';
-import { createOcr, type DeltaOcrPort, type DeltaOcrLayout, type DeltaOcrBox } from './ocr.ts';
-import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS } from './limits.ts';
+import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrPort, type DeltaOcrLayout, type DeltaOcrBox } from './ocr.ts';
+import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
 import { PERSONAL_TEXT_FALLBACKS, PERSONAL_TEXT_FALLBACK_LIMITS, personalTextRaster, restorePersonalLayout } from './personal-text-fallback.ts';
 import { createPersonalSignature, samePersonalSignature, type PersonalSignature } from './personal-notification.ts';
 import { parsePersonalAttribution, personalAttributionRegion } from './personal-attribution.ts';
@@ -159,9 +159,12 @@ export class Detector {
   private closed = false;
   private previous: Uint8Array | null = null;
   private lastScanAtMs = 0;
+  private failures = 0;
+  private inflight: CapturedRegion | null = null;
+  private backoffCancel: (() => void) | null = null;
   constructor(private readonly config: DeltaDetectionConfig, private readonly evidence: () => Promise<CapturedEvidence>,
     private readonly confirmed: (evidence: CapturedEvidence, match: DetectionMatch) => void,
-    private readonly openOcr: typeof createOcr = createOcr) {
+    private readonly openOcr: typeof createOcr = createOcr, private readonly backoffMs: (failures: number) => number = deltaOcrBackoffMs) {
     this.status = detectionStatus(config);
   }
   submit(region: CapturedRegion): void {
@@ -169,7 +172,7 @@ export class Detector {
       || this.status.reason === 'feedback-language-unsupported') return;
     if (!matchesCalibration(region, this.config.calibration)) {
       this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.pending = null; this.previous = null;
-      void this.ocr?.close(); return;
+      this.backoffCancel?.(); void this.ocr?.close(); return;
     }
     if (this.status.reason === 'source-changed' || this.status.phase === 'error' || this.status.phase === 'unavailable') return;
     this.pending = region;
@@ -178,6 +181,21 @@ export class Detector {
     }
   }
   private async drain(): Promise<void> {
+    while (!this.closed && this.status.phase !== 'error' && this.status.phase !== 'unavailable' && this.status.reason !== 'source-changed') {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = 'unavailable'; this.status.reason = 'ocr-unavailable'; this.status.lastError = String(error);
+          this.pending = null; this.inflight = null; return;
+        }
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  private async scan(): Promise<void> {
     try {
       if (!this.ocr) {
         this.ocr = await this.openOcr(this.config.language);
@@ -192,8 +210,9 @@ export class Detector {
         let difference = this.previous ? 0 : Infinity;
         if (this.previous) for (let i = 0; i < next.length; i++) difference += Math.abs(next[i]! - this.previous[i]!);
         if (difference / next.length < 1.5) continue;
-        this.previous = next; this.lastScanAtMs = Date.now();
+        this.previous = next; this.lastScanAtMs = Date.now(); this.inflight = region;
         const initial = await this.recognize(region);
+        this.inflight = null;
         if (this.closed || this.status.reason === 'source-changed') return;
         this.status.scans++; this.status.phase = 'ready'; this.status.reason = null;
         if (!initial.length) continue;
@@ -220,15 +239,31 @@ export class Detector {
         }
       }
     } catch (error) {
-      if (!this.closed && this.status.reason !== 'source-changed') {
-        this.status.phase = this.ocr ? 'error' : 'unavailable'; this.status.reason = this.ocr ? null : 'ocr-unavailable'; this.status.lastError = String(error);
-        this.pending = null; await this.ocr?.close();
-      }
+      if (this.inflight && !this.pending) this.pending = this.inflight;
+      throw error;
     }
+  }
+  private async noteTransient(error: unknown): Promise<boolean> {
+    const port = this.ocr; this.ocr = null; this.previous = null; this.inflight = null; this.failures++;
+    this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) { this.status.phase = 'starting'; this.status.reason = null; }
+    else { this.status.phase = 'error'; this.status.reason = null; this.pending = null; }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  private waitBackoff(ms: number): Promise<void> {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.backoffCancel = null; resolve(); }, ms);
+      this.backoffCancel = () => { clearTimeout(timer); this.backoffCancel = null; resolve(); };
+    });
   }
   private async recognize(region: CapturedRegion, verify = false): Promise<DetectionMatch[]> {
     if (this.recognitionStopped()) return [];
-    const layout = await this.ocr!.recognizeLayout(region), raw = this.matches(layout);
+    const layout = await this.ocr!.recognizeLayout(region); this.failures = 0; this.status.lastError = null; const raw = this.matches(layout);
     const finish = (matches: DetectionMatch[]) => matches.map((match) => match.personalAction
       ? { ...match, personalSignature: createPersonalSignature(region, match.personalAction, match.personalTarget) } : match);
     if (!this.config.calibration?.personalFeedbackRoi || this.config.language !== 'zh-CN') return finish(raw);
@@ -266,5 +301,5 @@ export class Detector {
     }
     return [...result.values()];
   }
-  async close(): Promise<void> { this.closed = true; this.pending = null; await this.ocr?.close(); await this.running; }
+  async close(): Promise<void> { this.closed = true; this.pending = null; this.backoffCancel?.(); await this.ocr?.close(); await this.running; }
 }

@@ -3,10 +3,11 @@ import { createHash } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { captureRectangle } from './roi.ts';
-import { createOcr, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
+import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
 import { matchesCalibration } from './detector.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_CONTEXT_PIXELS,
-  DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_REFERENCES, DELTA_MAX_LOOT_ROI_AREA, DELTA_MAX_ROI_PIXELS } from './limits.ts';
+  DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_REFERENCES, DELTA_MAX_LOOT_ROI_AREA, DELTA_MAX_ROI_PIXELS,
+  DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
 import type { DeltaDetectionConfig, DeltaLootCalibration, DeltaLootConfig, DeltaLootScene, DeltaLootSensitivity, DeltaLootState, DeltaRecognition, DeltaRoi } from './protocol.ts';
 
 export interface LootItemCandidate { box: DeltaOcrBox; signature: Uint8Array }
@@ -230,23 +231,40 @@ export class LootDetector {
   private tracker = new LootItemTracker();
   private ocr: DeltaOcrPort | null = null;
   private lastScanAtMs = 0;
+  private failures = 0;
+  private backoffCancel: (() => void) | null = null;
   constructor(private readonly config: DeltaLootConfig, private readonly evidence: () => Promise<CapturedEvidence>,
     private readonly candidate: (evidence: CapturedEvidence, match: LootMatch) => void, private readonly openOcr: typeof createOcr = createOcr,
-    combat?: DeltaDetectionConfig) { this.status = lootStatus(config, combat); }
+    combat?: DeltaDetectionConfig, private readonly backoffMs: (failures: number) => number = deltaOcrBackoffMs,
+    private readonly sampleIntervalMs = DELTA_LOOT_SAMPLE_INTERVAL_MS) { this.status = lootStatus(config, combat); }
   submit(region: CapturedRegion): void {
     if (this.closed || !this.config.enabled || !this.config.calibration || this.status.phase === 'unavailable' || this.status.phase === 'error' || this.status.reason) return;
     if (!matchesCalibration(region, { ...this.config.calibration, roi: this.config.calibration.itemsRoi })) {
-      this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.clearVisible(); void this.ocr?.close(); return;
+      this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.clearVisible(); this.backoffCancel?.(); void this.ocr?.close(); return;
     }
     this.pending = region;
     if (!this.running) this.running = this.drain().finally(() => { this.running = null; });
   }
   clearVisible(): void { this.visible = []; this.previous = []; this.pending = null; this.status.scene = null; }
   private async drain(): Promise<void> {
-    try {
-      while (this.pending && !this.closed) {
-        if (Date.now() - this.lastScanAtMs < DELTA_LOOT_SAMPLE_INTERVAL_MS) { await new Promise((done) => setTimeout(done, 50)); continue; }
-        const region = this.pending; this.pending = null; this.lastScanAtMs = Date.now();
+    while (!this.recognitionStopped() && this.status.phase !== 'error' && this.status.phase !== 'unavailable') {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = 'unavailable'; this.status.reason = 'ocr-unavailable'; this.status.lastError = String(error); this.clearVisible(); return;
+        }
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  private async scan(): Promise<void> {
+    while (this.pending && !this.closed) {
+      if (Date.now() - this.lastScanAtMs < this.sampleIntervalMs) { await new Promise((done) => setTimeout(done, 50)); continue; }
+      const region = this.pending; this.pending = null; this.lastScanAtMs = Date.now();
+      try {
         const candidates = detectLootItems(region, this.config.sensitivity), now = Date.now(), calibration = this.config.calibration!;
         const namespace = lootNamespace(region, calibration);
         this.visible = candidates.map((item) => item.signature); this.tracker.observe(namespace, this.visible, now);
@@ -268,6 +286,7 @@ export class LootDetector {
         this.status.engine = 'windows-ocr'; this.status.availableLanguages = this.ocr.availableLanguages;
         if (!this.ocr.language) { this.status.phase = 'unavailable'; this.status.reason = 'ocr-language-unavailable'; await this.ocr.close(); return; }
         const layout = await this.ocr.recognizeLayout(parts.context);
+        this.failures = 0; this.status.lastError = null;
         if (this.recognitionStopped()) { await this.ocr.close(); return; }
         const scene = parseLootContext(layout); this.status.scene = scene;
         if (!scene) continue;
@@ -279,12 +298,29 @@ export class LootDetector {
           this.candidate(parts.items, { dedupKey, signature: match.signature,
             recognition: { kind: 'loot-candidate', text, target: '', scene, basis: 'red-grid-ui', quality: 'unconfirmed', itemName: null } });
         }
+      } catch (error) {
+        if (!this.pending) this.pending = region;
+        throw error;
       }
-    } catch (error) {
-      if (!this.recognitionStopped()) { this.status.phase = this.ocr ? 'error' : 'unavailable'; this.status.reason = this.ocr ? null : 'ocr-unavailable'; this.status.lastError = String(error); this.clearVisible(); }
-      await this.ocr?.close();
     }
   }
+  private async noteTransient(error: unknown): Promise<boolean> {
+    const port = this.ocr; this.ocr = null; this.failures++; this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) { this.status.phase = 'starting'; this.status.reason = null; }
+    else { this.status.phase = 'error'; this.status.reason = null; this.clearVisible(); }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  private waitBackoff(ms: number): Promise<void> {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.backoffCancel = null; resolve(); }, ms);
+      this.backoffCancel = () => { clearTimeout(timer); this.backoffCancel = null; resolve(); };
+    });
+  }
   private recognitionStopped(): boolean { return this.closed || this.status.reason === 'source-changed'; }
-  async close(): Promise<void> { this.closed = true; this.clearVisible(); await this.ocr?.close(); await this.running; }
+  async close(): Promise<void> { this.closed = true; this.clearVisible(); this.backoffCancel?.(); await this.ocr?.close(); await this.running; }
 }
