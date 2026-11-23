@@ -3,13 +3,35 @@ import cp from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { windowsCalibrationHotkey } from '../src/standalone-hotkey.ts';
 
+async function calibrationChordAvailability() {
+  const probe = fileURLToPath(new URL('./fixtures/hotkey-chord-probe.cs', import.meta.url));
+  const command = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const script = "$ErrorActionPreference = 'Stop'\nAdd-Type -TypeDefinition ([IO.File]::ReadAllText($env:DELTA_TEST_PROBE))\n[HotkeyChordProbe]::Run()";
+  const child = cp.spawn(command, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+    windowsHide: true, env: { ...process.env, DELTA_TEST_PROBE: probe }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '', err = '';
+  child.stdout.on('data', bytes => { out += bytes.toString(); });
+  child.stderr.on('data', bytes => { err += bytes.toString(); });
+  const timer = setTimeout(() => child.kill(), 20_000);
+  const [code] = await once(child, 'close');
+  clearTimeout(timer);
+  if (code !== 0) throw new Error(`hotkey probe exited ${code}: ${err}`);
+  return out.trim().split(/\r?\n/).at(-1);
+}
+
+const chord = process.platform === 'win32' ? await calibrationChordAvailability() : 'free';
+
 test('Windows registers Ctrl+Shift+F8, dispatches its message, reports a conflict and releases the chord', {
-  skip: process.platform !== 'win32', timeout: 25_000,
+  skip: process.platform !== 'win32' || (chord === 'occupied' && 'Ctrl+Shift+F8 is already registered by another process'),
+  timeout: 25_000,
 }, async t => {
+  assert.equal(chord, 'free');
   const desktop = 'DeltaHotkeyTest-' + randomUUID();
   const probe = fileURLToPath(new URL('./fixtures/hotkey-desktop.cs', import.meta.url));
   const spawn = cp.spawn;
