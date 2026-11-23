@@ -2,8 +2,9 @@ import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { calibrationViewports, project } from './calibration-viewport.ts';
 import type { DeltaOcrBox as Box, DeltaOcrLayout, DeltaOcrLine } from './ocr.ts';
 import { DEFAULT_GAME_ASPECT_RATIO, type DeltaGameAspectRatio, type DeltaIdentitySuggestion } from './protocol.ts';
+import { uiGreen } from './pixels.ts';
+import { compactLower } from './text.ts';
 
-const compact = (value: string) => value.normalize('NFKC').replace(/\s+/gu, '').toLowerCase();
 const profileTitles = new Set(['个人信息', '个人资料', '个人档案', '我的资料', '我的档案', 'myprofile', 'playerprofile', 'playerinfo', 'personalinformation']);
 const nicknameLabel = /^(?:(?:玩\s*家\s*|游\s*戏\s*|角\s*色\s*)?昵\s*称|(?:player\s+name|nick\s*name))(?=\s|[:：]|$)[\s:：]*(.*)$/iu;
 const uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
@@ -12,14 +13,14 @@ const placeholders = new Set(['匿名玩家', 'anonymousplayer']);
 export const profileTab = { x: .066, y: .047, width: .069, height: .047 };
 export const watermarkFormat = /^(?:cn)?uid[:#]?(\d{8,24})(?:_\d+)?$/u;
 export const playerNumberFormat = /^(?:编号|uid|playerid)[:#]?(\d{8,24})$/u;
-export const isProfileTitle = (text: string) => profileTitles.has(compact(text));
-export const excludesOwnProfile = (text: string) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compact(text));
+export const isProfileTitle = (text: string) => profileTitles.has(compactLower(text));
+export const excludesOwnProfile = (text: string) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compactLower(text));
 export const hasNicknameLabel = (text: string) => nicknameLabel.test(text.trim());
 
 export function validIdentityNickname(value: unknown): value is string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
   const name = value.trim();
-  return !placeholders.has(compact(name)) && !uidField.test(name.normalize('NFKC'));
+  return !placeholders.has(compactLower(name)) && !uidField.test(name.normalize('NFKC'));
 }
 
 function adjacentValue(label: DeltaOcrLine, other: DeltaOcrLine): boolean {
@@ -42,7 +43,7 @@ export function selectedProfileTab(frame: CapturedRegion, area: Box): boolean {
       const x = stripe.x + Math.floor((i + .5) * stripe.width / 16);
       const p = (y * frame.width + x) * 4;
       const b = frame.bgra[p]!, g = frame.bgra[p + 1]!, r = frame.bgra[p + 2]!;
-      if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+      if (uiGreen(b, g, r)) green++;
     }
     if (green >= 15) return true;
   }
@@ -50,7 +51,7 @@ export function selectedProfileTab(frame: CapturedRegion, area: Box): boolean {
 }
 
 function accountNumber(lines: readonly DeltaOcrLine[], area: Box, format: RegExp): string | undefined {
-  const matches = lines.filter(line => contains(area, line.box)).map(line => format.exec(compact(line.text))?.[1]).filter(Boolean);
+  const matches = lines.filter(line => contains(area, line.box)).map(line => format.exec(compactLower(line.text))?.[1]).filter(Boolean);
   return matches.length === 1 ? matches[0] : undefined;
 }
 
@@ -88,7 +89,7 @@ function cardIdentity(layout: DeltaOcrLayout, frame: CapturedRegion, aspectRatio
   let selected = false, inactiveCard = false, activeCard = false;
   for (const area of calibrationViewports(frame, aspectRatio)) {
     const tab = project(area, profileTab);
-    if (!lines.some(line => contains(tab, line.box) && profileTitles.has(compact(line.text)))) continue;
+    if (!lines.some(line => contains(tab, line.box) && profileTitles.has(compactLower(line.text)))) continue;
     const { account, player } = cardAccounts(lines, area);
     if (account && player && account !== player) return { status: 'profile-unrecognized' };
     if (!selectedProfileTab(frame, area)) {
@@ -122,7 +123,7 @@ export function profileIdentity(layout: DeltaOcrLayout, frame?: CapturedRegion, 
     if (neighbors.length !== 1) return { status: 'nickname-unreadable' };
     const name = neighbors[0]!.trim();
     if (!validIdentityNickname(name) || !/[\p{L}]/u.test(name) || /[:：]|\s(?:UID|玩家\s*ID)(?=[\s\d#=_-]|$)/iu.test(name)
-      || profileTitles.has(compact(name))) return { status: 'nickname-unreadable' };
+      || profileTitles.has(compactLower(name))) return { status: 'nickname-unreadable' };
     candidates.add(name);
   }
   const [nickname] = candidates;

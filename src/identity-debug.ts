@@ -2,6 +2,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, renameSync, unl
 import { join, resolve } from 'node:path';
 import metadata from '../package.json' with { type: 'json' };
 import { DELTA_IDENTITY_DEBUG_MAX_FRAMES, DELTA_IDENTITY_DEBUG_MAX_LOG_BYTES } from './limits.ts';
+import { retainNewestFiles } from './retain-files.ts';
 
 const frameName = /^frame-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.png$/i;
 const logName = 'attempts.jsonl';
@@ -96,25 +97,7 @@ export class IdentityDebugStore {
   }
   private pruneFrames(dir: string, keepName: string): void {
     try {
-      const ranked: { name: string; mtimeMs: number }[] = [];
-      for (const entry of this.frames(dir)) {
-        const stat = lstatSync(join(dir, entry.name), { throwIfNoEntry: false });
-        if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
-        ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
-      }
-      ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-      let extras = ranked.length - this.maxFrames;
-      for (const item of ranked) {
-        if (extras <= 0) break;
-        if (item.name === keepName) continue;
-        extras--;
-        try {
-          const path = join(dir, item.name);
-          const stat = lstatSync(path);
-          if (!stat.isFile() || stat.nlink !== 1) continue;
-          unlinkSync(path);
-        } catch { /* A frame left in place still counts as pending. */ }
-      }
+      retainNewestFiles(dir, frameName, keepName, this.maxFrames);
       this.pendingFrames = this.frames(dir).length > 0;
     } catch { this.pendingFrames = true; }
   }

@@ -3000,7 +3000,7 @@ function deltaConfigGroups(language2 = "zh", hostControls = true, hotkeyAvailabl
 
 // src/world.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // src/roi.ts
@@ -3019,6 +3019,18 @@ function captureRectangle(roi, width, height) {
     width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
     height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
   };
+}
+
+// src/powershell.ts
+import { join } from "node:path";
+function powershellExecutable() {
+  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+// src/rect.ts
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
 }
 
 // src/ocr.ts
@@ -3170,6 +3182,15 @@ var PersonalNotificationTracker = class {
 // src/personal-attribution.ts
 var import_jpeg_js = __toESM(require_jpeg_js(), 1);
 
+// src/text.ts
+var stripWhitespace = (text11) => text11.replace(/\s+/gu, "");
+function compact(text11) {
+  return stripWhitespace(text11.normalize("NFKC"));
+}
+function compactLower(text11) {
+  return compact(text11).toLowerCase();
+}
+
 // src/detector.ts
 function calibrationFitsBudget(calibration) {
   try {
@@ -3202,8 +3223,7 @@ function detectionStatus(config) {
 var import_jpeg_js2 = __toESM(require_jpeg_js(), 1);
 import { createHash as createHash2 } from "node:crypto";
 function lootCaptureRoi(calibration) {
-  const a = calibration.itemsRoi, b = calibration.contextRoi, x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+  return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
 function lootCalibrationFitsBudget(calibration) {
   try {
@@ -3394,7 +3414,7 @@ function responseGuidance(reference) {
 // src/knowledge-store.ts
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join as join2 } from "node:path";
 
 // src/knowledge.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -3457,7 +3477,7 @@ var KnowledgeStore = class {
   constructor(dataDir) {
     this.builtin = parseKnowledge(readFileSync(new URL("../knowledge/delta-operations.md", import.meta.url), "utf8"), "delta-operations.md");
     this.document = this.builtin;
-    this.file = dataDir ? join(dataDir, "worlds", "delta", "knowledge.json") : null;
+    this.file = dataDir ? join2(dataDir, "worlds", "delta", "knowledge.json") : null;
     try {
       this.reload();
     } catch {
@@ -3532,8 +3552,8 @@ var KnowledgeStore = class {
 };
 
 // src/identity-debug.ts
-import { closeSync, lstatSync, mkdirSync as mkdirSync2, openSync, readdirSync, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join2, resolve } from "node:path";
+import { closeSync, lstatSync as lstatSync2, mkdirSync as mkdirSync2, openSync, readdirSync as readdirSync2, renameSync as renameSync2, unlinkSync as unlinkSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join4, resolve } from "node:path";
 
 // package.json
 var package_default = {
@@ -3599,6 +3619,33 @@ var package_default = {
   }
 };
 
+// src/retain-files.ts
+import { lstatSync, readdirSync, unlinkSync as unlinkSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+function retainNewestFiles(directory, pattern, keepName, maxFiles) {
+  const ranked = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !pattern.test(entry.name)) continue;
+    const stat = lstatSync(join3(directory, entry.name), { throwIfNoEntry: false });
+    if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
+    ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
+  }
+  ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  let extras = ranked.length - maxFiles;
+  for (const item of ranked) {
+    if (extras <= 0) break;
+    if (item.name === keepName) continue;
+    extras--;
+    try {
+      const path = join3(directory, item.name);
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.nlink !== 1) continue;
+      unlinkSync2(path);
+    } catch {
+    }
+  }
+}
+
 // src/identity-debug.ts
 var frameName = /^frame-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.png$/i;
 var logName = "attempts.jsonl";
@@ -3627,41 +3674,41 @@ var IdentityDebugStore = class {
     if (!this.dataDir) throw new Error("World data directory unavailable");
     let dir = resolve(this.dataDir);
     for (const component of ["worlds", "delta", "identity-debug"]) {
-      dir = join2(dir, component);
-      if (create && !lstatSync(dir, { throwIfNoEntry: false })) mkdirSync2(dir, { mode: 448 });
-      if (!lstatSync(dir).isDirectory()) throw new Error("Identity debug directory unavailable");
+      dir = join4(dir, component);
+      if (create && !lstatSync2(dir, { throwIfNoEntry: false })) mkdirSync2(dir, { mode: 448 });
+      if (!lstatSync2(dir).isDirectory()) throw new Error("Identity debug directory unavailable");
     }
     return dir;
   }
   regularLog(dir) {
-    return !!this.regularStat(join2(dir, logName));
+    return !!this.regularStat(join4(dir, logName));
   }
   /** `null` when the path is absent, `false` when it is not a regular file with one link. */
   regularStat(path) {
-    const stat = lstatSync(path, { throwIfNoEntry: false });
+    const stat = lstatSync2(path, { throwIfNoEntry: false });
     if (!stat) return null;
     return stat.isFile() && stat.nlink === 1 ? stat : false;
   }
   frames(dir) {
-    return readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && frameName.test(entry.name));
+    return readdirSync2(dir, { withFileTypes: true }).filter((entry) => entry.isFile() && frameName.test(entry.name));
   }
   logPath() {
     const dir = this.directory(false);
     if (!this.regularLog(dir)) throw new Error("Identity log unavailable");
-    return join2(dir, logName);
+    return join4(dir, logName);
   }
   record(attemptId, event) {
     try {
-      const dir = this.directory(true), path = join2(dir, logName);
+      const dir = this.directory(true), path = join4(dir, logName);
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
       const line = JSON.stringify({ ...event, version: package_default.version, timestamp, attemptId }) + "\n";
       let stat = this.regularStat(path);
       if (stat === false) return;
       if (stat && stat.size + Buffer.byteLength(line) > this.maxLogBytes) {
-        const archived = join2(dir, previousLogName);
+        const archived = join4(dir, previousLogName);
         const previous = this.regularStat(archived);
         if (previous === false) return;
-        if (previous) unlinkSync2(archived);
+        if (previous) unlinkSync3(archived);
         stat = this.regularStat(path);
         if (!stat) return;
         renameSync2(path, archived);
@@ -3677,7 +3724,7 @@ var IdentityDebugStore = class {
     if (!frameName.test(name)) return null;
     try {
       const dir = this.directory(true);
-      const path = join2(dir, name);
+      const path = join4(dir, name);
       const fd = openSync(path, "wx", 384);
       try {
         try {
@@ -3686,7 +3733,7 @@ var IdentityDebugStore = class {
           closeSync(fd);
         }
       } catch (error) {
-        unlinkSync2(path);
+        unlinkSync3(path);
         throw error;
       }
       this.pruneFrames(dir, name);
@@ -3697,26 +3744,7 @@ var IdentityDebugStore = class {
   }
   pruneFrames(dir, keepName) {
     try {
-      const ranked = [];
-      for (const entry of this.frames(dir)) {
-        const stat = lstatSync(join2(dir, entry.name), { throwIfNoEntry: false });
-        if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
-        ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
-      }
-      ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-      let extras = ranked.length - this.maxFrames;
-      for (const item of ranked) {
-        if (extras <= 0) break;
-        if (item.name === keepName) continue;
-        extras--;
-        try {
-          const path = join2(dir, item.name);
-          const stat = lstatSync(path);
-          if (!stat.isFile() || stat.nlink !== 1) continue;
-          unlinkSync2(path);
-        } catch {
-        }
-      }
+      retainNewestFiles(dir, frameName, keepName, this.maxFrames);
       this.pendingFrames = this.frames(dir).length > 0;
     } catch {
       this.pendingFrames = true;
@@ -3728,7 +3756,7 @@ var IdentityDebugStore = class {
       let remaining = false;
       for (const entry of this.frames(dir)) {
         try {
-          unlinkSync2(join2(dir, entry.name));
+          unlinkSync3(join4(dir, entry.name));
         } catch {
           remaining = true;
         }
@@ -3757,13 +3785,12 @@ function evaluateSpeech(config, event, context) {
 }
 
 // src/profile-identity.ts
-var compact = (value) => value.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
 var uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
 var placeholders = /* @__PURE__ */ new Set(["\u533F\u540D\u73A9\u5BB6", "anonymousplayer"]);
 function validIdentityNickname(value) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
   const name = value.trim();
-  return !placeholders.has(compact(name)) && !uidField.test(name.normalize("NFKC"));
+  return !placeholders.has(compactLower(name)) && !uidField.test(name.normalize("NFKC"));
 }
 
 // src/panel-rpc.ts
@@ -4108,12 +4135,12 @@ var DeltaWorker = class {
 // src/screenshot-reveal.ts
 import { spawn } from "node:child_process";
 import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
-import { lstatSync as lstatSync2, mkdirSync as mkdirSync3, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync3, unlinkSync as unlinkSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename, dirname as dirname2, join as join3, resolve as resolve2 } from "node:path";
+import { lstatSync as lstatSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, renameSync as renameSync3, unlinkSync as unlinkSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname2, join as join5, resolve as resolve2 } from "node:path";
 var revealName = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-(?:preview|full|crop)-[\da-f]{64}\.jpg$/;
 function openScreenshotInFolder(filePath) {
   const windows = process.platform === "win32";
-  const command = windows ? join3(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe") : process.platform === "darwin" ? "/usr/bin/open" : "/usr/bin/xdg-open";
+  const command = windows ? join5(process.env.SystemRoot ?? "C:\\Windows", "explorer.exe") : process.platform === "darwin" ? "/usr/bin/open" : "/usr/bin/xdg-open";
   const args = windows ? [`/select,"${filePath}"`] : process.platform === "darwin" ? ["-R", filePath] : [dirname2(filePath)];
   return new Promise((done, fail) => {
     const child = spawn(command, args, { detached: true, stdio: "ignore", windowsVerbatimArguments: windows });
@@ -4129,50 +4156,27 @@ async function revealCapture(options, capture, part) {
   const stamp = new Date(capture.frame.capturedAt).toISOString().replaceAll(":", "-");
   const bytes = Buffer.from(capture.jpeg.buffer, capture.jpeg.byteOffset, capture.jpeg.byteLength);
   const digest = createHash4("sha256").update(bytes).digest("hex");
-  const filePath = join3(directory, `${stamp}-${part}-${digest}.jpg`);
+  const filePath = join5(directory, `${stamp}-${part}-${digest}.jpg`);
   mkdirSync3(directory, { recursive: true, mode: 448 });
-  if (!lstatSync2(directory).isDirectory()) throw new Error("Screenshot directory is unavailable");
-  const existing = lstatSync2(filePath, { throwIfNoEntry: false });
+  if (!lstatSync3(directory).isDirectory()) throw new Error("Screenshot directory is unavailable");
+  const existing = lstatSync3(filePath, { throwIfNoEntry: false });
   if (existing) {
     if (!existing.isFile() || existing.size !== bytes.byteLength || !bytes.equals(readFileSync2(filePath))) throw new Error("Screenshot file has changed");
   } else {
-    const temporary = join3(directory, `.${randomUUID2()}.tmp`);
+    const temporary = join5(directory, `.${randomUUID2()}.tmp`);
     try {
       writeFileSync3(temporary, bytes, { flag: "wx", mode: 384 });
       renameSync3(temporary, filePath);
     } catch (error) {
       try {
-        unlinkSync3(temporary);
+        unlinkSync4(temporary);
       } catch {
       }
       throw error;
     }
   }
-  pruneRevealDirectory(directory, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
+  retainNewestFiles(directory, revealName, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
   await options.open(filePath);
-}
-function pruneRevealDirectory(directory, keepName, maxFiles) {
-  const ranked = [];
-  for (const entry of readdirSync2(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !revealName.test(entry.name)) continue;
-    const stat = lstatSync2(join3(directory, entry.name), { throwIfNoEntry: false });
-    if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
-    ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
-  }
-  ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  let extras = ranked.length - maxFiles;
-  for (const item of ranked) {
-    if (extras <= 0) break;
-    if (item.name === keepName) continue;
-    extras--;
-    try {
-      const path = join3(directory, item.name);
-      const stat = lstatSync2(path);
-      if (!stat.isFile() || stat.nlink !== 1) continue;
-      unlinkSync3(path);
-    } catch {
-    }
-  }
 }
 
 // src/startup-check.ts
@@ -4220,7 +4224,6 @@ function startupCheck(frame, detection, loot) {
 
 // src/standalone-hotkey.ts
 import { spawn as spawn2 } from "node:child_process";
-import { join as join4 } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var source = fileURLToPath2(new URL("../src/standalone/CalibrationHotkey.cs", import.meta.url));
@@ -4233,7 +4236,7 @@ var windowsCalibrationHotkey = {
     let exited;
     void retiring.then(() => {
       if (released) return;
-      const command = join4(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      const command = powershellExecutable();
       const helper = spawn2(command, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script2], {
         windowsHide: true,
         env: { ...process.env, DELTA_HOTKEY_SOURCE: source },
@@ -4299,7 +4302,7 @@ var DeltaWorld = class {
     this.knowledge = new KnowledgeStore(options.dataDir);
     this.identityDebug = new IdentityDebugStore(options.dataDir);
     this.standalone = options.standalone ?? (process.platform === "win32" ? windowsCapture : void 0);
-    const directory = options.screenshotReveal?.directory ?? (options.dataDir ? join5(options.dataDir, "worlds", this.id, "screenshots") : null);
+    const directory = options.screenshotReveal?.directory ?? (options.dataDir ? join6(options.dataDir, "worlds", this.id, "screenshots") : null);
     this.screenshotReveal = directory ? { directory, open: options.screenshotReveal?.open ?? openScreenshotInFolder } : null;
   }
   options;

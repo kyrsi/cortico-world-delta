@@ -8,6 +8,8 @@ import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_OCR_TRANSIENT_FAILURE_L
 import { PERSONAL_TEXT_FALLBACKS, PERSONAL_TEXT_FALLBACK_LIMITS, personalTextRaster, restorePersonalLayout } from './personal-text-fallback.ts';
 import { createPersonalSignature, samePersonalSignature, type PersonalSignature } from './personal-notification.ts';
 import { parsePersonalAttribution, personalAttributionRegion } from './personal-attribution.ts';
+import { unionRects } from './rect.ts';
+import { compact, compactUpper } from './text.ts';
 import type { DeltaAttribution, DeltaCalibration, DeltaDetectionConfig, DeltaDetectionState, DeltaGameLanguage, DeltaRecognition } from './protocol.ts';
 
 export interface DetectionMatch {
@@ -17,21 +19,20 @@ export interface DetectionMatch {
   personalTarget?: DeltaOcrBox;
   personalSignature?: PersonalSignature | null;
 }
-const compact = (text: string) => text.normalize('NFKC').replace(/\s+/gu, '').toLocaleUpperCase('en-US');
 export function parseDetection(lines: readonly string[], nickname: string, language: DeltaGameLanguage): DetectionMatch | null {
-  const name = compact(nickname);
+  const name = compactUpper(nickname);
   if (!name || !language) return null;
   const pattern = language === 'en-US' ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = new Map<string, DetectionMatch>();
   for (const text of lines) {
     const normalized = text.normalize('NFKC').trim(), match = pattern.exec(normalized);
-    if (!match || compact(match[1]!) !== name) continue;
-    const target = compact(match[3]!);
+    if (!match || compactUpper(match[1]!) !== name) continue;
+    const target = compactUpper(match[3]!);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]!) || /击倒|击杀/u.test(match[3]!)) continue;
-    const verb = compact(match[2]!), kind = verb === 'KNOCKEDDOWN' || verb === '击倒' ? 'knockdown' : 'kill';
+    const verb = compactUpper(match[2]!), kind = verb === 'KNOCKEDDOWN' || verb === '击倒' ? 'knockdown' : 'kill';
     const key = createHash('sha256').update(`${kind}:${name}:${target}`).digest('hex');
     matches.set(key, { kind, text, dedupKey: key, attribution: { relation: 'self', basis: 'actor-text', assisted: false, spectating: false }, recognition: { kind: 'actor-text', text,
-      actor: match[1]!.normalize('NFKC').replace(/\s+/gu, ''), target: match[3]!.normalize('NFKC').replace(/\s+/gu, '') } });
+      actor: compact(match[1]!), target: compact(match[3]!) } });
   }
   return matches.size === 1 ? [...matches.values()][0]! : null;
 }
@@ -45,7 +46,7 @@ function sameBaseline(a: DeltaOcrBox, b: DeltaOcrBox): boolean {
 function joinedTextAt(words: readonly { text: string; box: DeltaOcrBox }[], boundary: number): boolean {
   let offset = 0;
   for (const [index, word] of words.entries()) {
-    offset += compact(word.text).length;
+    offset += compactUpper(word.text).length;
     if (offset > boundary) return true;
     if (offset === boundary) {
       const next = words[index + 1]?.box;
@@ -57,9 +58,9 @@ function joinedTextAt(words: readonly { text: string; box: DeltaOcrBox }[], boun
 
 function personalFeedbackRows(layout: DeltaOcrLayout) {
   const words = layout.lines.flatMap((line) => line.words);
-  return words.filter((word) => compact(word.text).includes('击')).map((anchor) => {
+  return words.filter((word) => compactUpper(word.text).includes('击')).map((anchor) => {
     const row = words.filter((word) => sameBaseline(anchor.box, word.box)).sort((a, b) => a.box.x - b.box.x);
-    const text = row.map((word) => word.text).join(' '), normalized = compact(text), actions = [...normalized.matchAll(/击倒|击败/gu)];
+    const text = row.map((word) => word.text).join(' '), normalized = compactUpper(text), actions = [...normalized.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0]! : null;
     const prefix = normalized.slice(0, action?.index ?? normalized.indexOf('击'));
     const end = action ? action.index! + action[0].length : 0;
@@ -100,7 +101,7 @@ export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string):
     let offset = 0;
     const boxes: DeltaOcrBox[] = [], targetBoxes: DeltaOcrBox[] = [];
     for (const word of row) {
-      const length = compact(word.text).length, start = Math.max(offset, action.index!), end = Math.min(offset + length, action.index! + action[0].length);
+      const length = compactUpper(word.text).length, start = Math.max(offset, action.index!), end = Math.min(offset + length, action.index! + action[0].length);
       if (end > start) boxes.push({ ...word.box, x: word.box.x + word.box.width * (start - offset) / length, width: word.box.width * (end - start) / length });
       const targetStart = Math.max(offset, action.index! + action[0].length);
       if (offset + length > targetStart) targetBoxes.push({ ...word.box, x: word.box.x + word.box.width * (targetStart - offset) / length,
@@ -110,11 +111,8 @@ export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string):
     const x = Math.min(...boxes.map((box) => box.x)), last = boxes[boxes.length - 1]!;
     // The final action glyph anchors the target baseline despite noisy modifier boxes.
     const personalAction = { x, y: last.y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: last.height };
-    const targetX = Math.min(...targetBoxes.map((box) => box.x)), targetY = Math.min(...targetBoxes.map((box) => box.y));
-    const personalTarget = targetBoxes.length ? { x: targetX, y: targetY,
-      width: Math.max(...targetBoxes.map((box) => box.x + box.width)) - targetX,
-      height: Math.max(...targetBoxes.map((box) => box.y + box.height)) - targetY } : undefined;
-    const key = createHash('sha256').update(`${kind}:${compact(nickname)}:${assisted ? 'teammate' : 'self'}:${target}`).digest('hex');
+    const personalTarget = targetBoxes.length ? unionRects(targetBoxes) : undefined;
+    const key = createHash('sha256').update(`${kind}:${compactUpper(nickname)}:${assisted ? 'teammate' : 'self'}:${target}`).digest('hex');
     matches.set(key, { kind, text, dedupKey: key, personalAction, ...(personalTarget ? { personalTarget } : {}),
       attribution: { relation: assisted ? 'teammate' : 'self', basis: assisted ? 'assist-text' : 'personal-feedback', assisted, spectating: false },
       recognition: { kind: 'personal-feedback-text', text, target } });

@@ -2212,8 +2212,23 @@ function captureRectangle(roi, width, height) {
 
 // src/ocr.ts
 import { spawn } from "node:child_process";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
+
+// src/powershell.ts
+import { join } from "node:path";
+function powershellExecutable() {
+  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+// src/rect.ts
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+function unionRects(boxes) {
+  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
+  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
+}
 
 // src/limits.ts
 var DELTA_MAX_JPEG_BYTES = 2 * 1024 * 1024;
@@ -2302,10 +2317,6 @@ try {
   }
 } catch { @{kind='error'; message=$_.Exception.Message} | ConvertTo-Json -Compress; exit 1 }
 `;
-function union(boxes) {
-  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
-  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
-}
 function sourceBox(value, width, height, angle) {
   const box = value;
   if (!box || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) throw new Error("Invalid Windows OCR box");
@@ -2343,7 +2354,7 @@ function parseLayout(value, region) {
       }
       words.push({ text: word.text, box });
     }
-    if (words.length) lines.push({ text: line.text, words, box: union(words.map((word) => word.box)) });
+    if (words.length) lines.push({ text: line.text, words, box: unionRects(words.map((word) => word.box)) });
     else result.truncated = true;
   }
   result.lines = lines;
@@ -2355,7 +2366,7 @@ async function createOcr(language) {
   const source2 = script.replace("__LANGUAGE__", language).replace("__PARENT_PID__", String(process.pid)).replaceAll("__MAX_LINES__", String(DELTA_OCR_LIMITS.maxLines)).replaceAll("__MAX_WORDS__", String(DELTA_OCR_LIMITS.maxWords)).replaceAll("__MAX_LINE_CHARS__", String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll("__MAX_WORD_CHARS__", String(DELTA_OCR_LIMITS.maxWordChars));
   const command = Buffer.from(source2, "utf16le").toString("base64");
   const child = spawn(
-    join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    powershellExecutable(),
     ["-NoProfile", "-NonInteractive", "-EncodedCommand", command],
     { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
@@ -2459,6 +2470,14 @@ async function createOcr(language) {
   };
 }
 
+// src/pixels.ts
+function uiGreen(b, g, r) {
+  return g >= 105 && g - r >= 48 && g - b >= 24;
+}
+function bgraGray(b, g, r) {
+  return b * 3735 + g * 19235 + r * 9798 + 16384 >> 15;
+}
+
 // src/personal-text-fallback.ts
 var PERSONAL_TEXT_FALLBACK_LIMITS = {
   maxVariants: 3,
@@ -2478,7 +2497,7 @@ function personalTextRaster(source2, kind) {
   const mask = new Uint8Array(paddedWidth * paddedHeight).fill(255);
   const gray = kind === "white-gold-edge" ? new Uint8Array(sourceWidth * sourceHeight) : null;
   if (gray) for (let at = 0, pixel = 0; pixel < gray.length; pixel++, at += 4) {
-    gray[pixel] = source2.bgra[at] * 3735 + source2.bgra[at + 1] * 19235 + source2.bgra[at + 2] * 9798 + 16384 >> 15;
+    gray[pixel] = bgraGray(source2.bgra[at], source2.bgra[at + 1], source2.bgra[at + 2]);
   }
   for (let y = 0; y < height; y++) for (let x = 0; x < sourceWidth; x++) {
     const at = ((y + offsetY) * sourceWidth + x) * 4;
@@ -2643,6 +2662,23 @@ function samePersonalSignature(a, b) {
 
 // src/personal-attribution.ts
 var import_jpeg_js = __toESM(require_jpeg_js(), 1);
+
+// src/text.ts
+var stripWhitespace = (text) => text.replace(/\s+/gu, "");
+function compact(text) {
+  return stripWhitespace(text.normalize("NFKC"));
+}
+function compactUpper(text) {
+  return compact(text).toLocaleUpperCase("en-US");
+}
+function compactLower(text) {
+  return compact(text).toLowerCase();
+}
+function upperNFKC(text) {
+  return text.normalize("NFKC").toUpperCase();
+}
+
+// src/personal-attribution.ts
 var PERSONAL_ATTRIBUTION_ROI = { x: 0, y: 0.82, width: 1, height: 0.18 };
 var PERSONAL_ATTRIBUTION_LIMITS = { scale: 2, maxPixels: DELTA_MAX_ROI_PIXELS, footerStart: 0.6 };
 function hasSpectatorFrame(image) {
@@ -2692,34 +2728,32 @@ function personalAttributionRegion(evidence) {
 }
 function parsePersonalAttribution(layout, nickname, spectatorFrame = false) {
   if (layout.truncated || !layout.lines.some((line) => line.text.trim())) return "unknown";
-  const compact4 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
-  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compact4(line.text)).join(" ");
+  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compactUpper(line.text)).join(" ");
   const controls = [/切换观战(?:对象)?|SWITCHSPECTAT/u, /观战名片|SPECTATORCARD/u, /退出观战|EXITSPECTAT/u];
   if (controls.filter((control) => control.test(footer)).length >= 2) return "other";
-  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compact4(line.text)).join("");
-  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compact4(line.text)));
-  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compact4(nickname) ? "other" : "own";
+  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compactUpper(line.text)).join("");
+  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compactUpper(line.text)));
+  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compactUpper(nickname) ? "other" : "own";
 }
 
 // src/detector.ts
-var compact = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
 function parseDetection(lines, nickname, language) {
-  const name = compact(nickname);
+  const name = compactUpper(nickname);
   if (!name || !language) return null;
   const pattern = language === "en-US" ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = /* @__PURE__ */ new Map();
   for (const text of lines) {
     const normalized2 = text.normalize("NFKC").trim(), match = pattern.exec(normalized2);
-    if (!match || compact(match[1]) !== name) continue;
-    const target = compact(match[3]);
+    if (!match || compactUpper(match[1]) !== name) continue;
+    const target = compactUpper(match[3]);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]) || /击倒|击杀/u.test(match[3])) continue;
-    const verb = compact(match[2]), kind = verb === "KNOCKEDDOWN" || verb === "\u51FB\u5012" ? "knockdown" : "kill";
+    const verb = compactUpper(match[2]), kind = verb === "KNOCKEDDOWN" || verb === "\u51FB\u5012" ? "knockdown" : "kill";
     const key = createHash("sha256").update(`${kind}:${name}:${target}`).digest("hex");
     matches.set(key, { kind, text, dedupKey: key, attribution: { relation: "self", basis: "actor-text", assisted: false, spectating: false }, recognition: {
       kind: "actor-text",
       text,
-      actor: match[1].normalize("NFKC").replace(/\s+/gu, ""),
-      target: match[3].normalize("NFKC").replace(/\s+/gu, "")
+      actor: compact(match[1]),
+      target: compact(match[3])
     } });
   }
   return matches.size === 1 ? [...matches.values()][0] : null;
@@ -2731,7 +2765,7 @@ function sameBaseline(a, b) {
 function joinedTextAt(words, boundary) {
   let offset = 0;
   for (const [index, word] of words.entries()) {
-    offset += compact(word.text).length;
+    offset += compactUpper(word.text).length;
     if (offset > boundary) return true;
     if (offset === boundary) {
       const next = words[index + 1]?.box;
@@ -2742,9 +2776,9 @@ function joinedTextAt(words, boundary) {
 }
 function personalFeedbackRows(layout) {
   const words = layout.lines.flatMap((line) => line.words);
-  return words.filter((word) => compact(word.text).includes("\u51FB")).map((anchor) => {
+  return words.filter((word) => compactUpper(word.text).includes("\u51FB")).map((anchor) => {
     const row = words.filter((word) => sameBaseline(anchor.box, word.box)).sort((a, b) => a.box.x - b.box.x);
-    const text = row.map((word) => word.text).join(" "), normalized2 = compact(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
+    const text = row.map((word) => word.text).join(" "), normalized2 = compactUpper(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0] : null;
     const prefix = normalized2.slice(0, action?.index ?? normalized2.indexOf("\u51FB"));
     const end = action ? action.index + action[0].length : 0;
@@ -2780,7 +2814,7 @@ function parsePersonalFeedback(layout, nickname) {
     let offset = 0;
     const boxes = [], targetBoxes = [];
     for (const word of row) {
-      const length = compact(word.text).length, start2 = Math.max(offset, action.index), end = Math.min(offset + length, action.index + action[0].length);
+      const length = compactUpper(word.text).length, start2 = Math.max(offset, action.index), end = Math.min(offset + length, action.index + action[0].length);
       if (end > start2) boxes.push({ ...word.box, x: word.box.x + word.box.width * (start2 - offset) / length, width: word.box.width * (end - start2) / length });
       const targetStart = Math.max(offset, action.index + action[0].length);
       if (offset + length > targetStart) targetBoxes.push({
@@ -2792,14 +2826,8 @@ function parsePersonalFeedback(layout, nickname) {
     }
     const x = Math.min(...boxes.map((box) => box.x)), last = boxes[boxes.length - 1];
     const personalAction = { x, y: last.y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: last.height };
-    const targetX = Math.min(...targetBoxes.map((box) => box.x)), targetY = Math.min(...targetBoxes.map((box) => box.y));
-    const personalTarget = targetBoxes.length ? {
-      x: targetX,
-      y: targetY,
-      width: Math.max(...targetBoxes.map((box) => box.x + box.width)) - targetX,
-      height: Math.max(...targetBoxes.map((box) => box.y + box.height)) - targetY
-    } : void 0;
-    const key = createHash("sha256").update(`${kind}:${compact(nickname)}:${assisted ? "teammate" : "self"}:${target}`).digest("hex");
+    const personalTarget = targetBoxes.length ? unionRects(targetBoxes) : void 0;
+    const key = createHash("sha256").update(`${kind}:${compactUpper(nickname)}:${assisted ? "teammate" : "self"}:${target}`).digest("hex");
     matches.set(key, {
       kind,
       text,
@@ -3069,9 +3097,20 @@ var Detector = class {
 // src/loot-detector.ts
 var import_jpeg_js2 = __toESM(require_jpeg_js(), 1);
 import { createHash as createHash2 } from "node:crypto";
+
+// src/image.ts
+function copyPixelRect(source2, sourceWidth, x, y, width, height) {
+  const target = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row++) {
+    const start2 = ((y + row) * sourceWidth + x) * 4;
+    target.set(source2.subarray(start2, start2 + width * 4), row * width * 4);
+  }
+  return target;
+}
+
+// src/loot-detector.ts
 function lootCaptureRoi(calibration) {
-  const a = calibration.itemsRoi, b = calibration.contextRoi, x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+  return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
 function lootCalibrationFitsBudget(calibration) {
   try {
@@ -3098,14 +3137,14 @@ function lootStatus(config, combat) {
 }
 function parseLootContext(layout) {
   if (layout.truncated) return null;
-  const text = layout.lines.map((line) => line.text).join(" ").normalize("NFKC").toUpperCase();
-  const compact4 = text.replace(/\s+/gu, ""), contains2 = (pattern) => pattern.test(text) || pattern.test(compact4);
+  const text = upperNFKC(layout.lines.map((line) => line.text).join(" "));
+  const folded = stripWhitespace(text), contains2 = (pattern) => pattern.test(text) || pattern.test(folded);
   const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains2).length;
   if (!classes) return null;
   if (contains2(/容器|搜索物资|\bCONTAINER\b/u)) return "container";
   if (contains2(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return "loot";
   const capacityHeading = layout.lines.some((line) => {
-    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(line.text.normalize("NFKC").replace(/\s+/gu, ""));
+    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(compact(line.text));
     return match && Number(match[2]) > 0 && Number(match[1]) <= Number(match[2]);
   });
   if (capacityHeading) return "inventory";
@@ -3284,22 +3323,16 @@ function lootNamespace(region, calibration) {
   return JSON.stringify([region.display, region.topologyRevision, calibration]);
 }
 function evidenceRegions(evidence, calibration) {
-  const { width, height } = calibration.display.bounds, union2 = captureRectangle(lootCaptureRoi(calibration), width, height);
+  const { width, height } = calibration.display.bounds, union = captureRectangle(lootCaptureRoi(calibration), width, height);
   const extract = (roi) => {
-    const box = captureRectangle(roi, width, height), data = new Uint8Array(box.width * box.height * 4);
-    if (evidence.region.width !== union2.width || evidence.region.height !== union2.height) throw new Error("Invalid native item evidence dimensions");
-    for (let y = 0; y < box.height; y++) {
-      const start2 = ((box.y - union2.y + y) * union2.width + box.x - union2.x) * 4;
-      data.set(evidence.region.bgra.subarray(start2, start2 + box.width * 4), y * box.width * 4);
-    }
+    const box = captureRectangle(roi, width, height);
+    if (evidence.region.width !== union.width || evidence.region.height !== union.height) throw new Error("Invalid native item evidence dimensions");
+    const data = copyPixelRect(evidence.region.bgra, union.width, box.x - union.x, box.y - union.y, box.width, box.height);
     return { ...evidence.region, width: box.width, height: box.height, bgra: data };
   };
   const decoded = import_jpeg_js2.default.decode(evidence.capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height), rgba = new Uint8Array(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start2 = ((crop.y + y) * decoded.width + crop.x) * 4;
-    rgba.set(decoded.data.subarray(start2, start2 + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height);
+  const rgba = copyPixelRect(decoded.data, decoded.width, crop.x, crop.y, crop.width, crop.height);
   return { items: {
     capture: evidence.capture,
     region: extract(calibration.itemsRoi),
@@ -3675,9 +3708,9 @@ function hintedViewport(frame, hint) {
 function letterboxedViewport(frame) {
   const { width, height } = frame;
   function border(horizontal, reverse) {
-    const across = horizontal ? width : height, extent2 = horizontal ? height : width;
-    for (let offset = 0; offset < extent2 * 0.32; offset++) {
-      const coordinate = reverse ? extent2 - 1 - offset : offset;
+    const across = horizontal ? width : height, extent = horizontal ? height : width;
+    for (let offset = 0; offset < extent * 0.32; offset++) {
+      const coordinate = reverse ? extent - 1 - offset : offset;
       let dark = 0;
       for (let n = 0; n < 48; n++) {
         const cross = Math.floor((n + 0.5) * across / 48);
@@ -3711,10 +3744,6 @@ var labels = {
   safe: /^(安全箱|保险箱|safebox|securecontainer)$/u
 };
 var labelPatterns = Object.entries(labels);
-var extent = (a, b) => {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-};
 function lineAnchors(line) {
   const result = [];
   for (let first = 0; first < line.words.length; first++) {
@@ -3723,7 +3752,7 @@ function lineAnchors(line) {
       const word = line.words[last];
       text += word.text.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
       if (text.length > 16) break;
-      box = extent(box, word.box);
+      box = unionRect(box, word.box);
       const label = labelPatterns.find(([name, pattern]) => pattern.test(name === "safe" ? text.replace(/[:;：；]+$/u, "") : text))?.[0];
       if (!label) continue;
       const previous = line.words[first - 1], next = line.words[last + 1];
@@ -3741,7 +3770,7 @@ function scanRaster(frame, box, enlargeText, maxScale) {
     for (let y = 0, i = 0; y < box.height; y++) {
       let at = ((box.y + y) * frame.width + box.x) * 4;
       for (let x = 0; x < box.width; x++, i++, at += 4) {
-        gray[i] = frame.bgra[at] * 3735 + frame.bgra[at + 1] * 19235 + frame.bgra[at + 2] * 9798 + 16384 >> 15;
+        gray[i] = bgraGray(frame.bgra[at], frame.bgra[at + 1], frame.bgra[at + 2]);
       }
     }
     return doubleOcrRaster(gray, box.width, box.height);
@@ -3778,8 +3807,8 @@ function matchingBanner(frame, start2, action) {
     let green = 0;
     for (let column = 0; column < count; column++) {
       const x = start2.x + Math.floor((column + 0.5) * span / count);
-      const at = (frame.width * y + x) * 4, g = frame.bgra[at + 1];
-      if (g >= 105 && g - frame.bgra[at + 2] >= 48 && g - frame.bgra[at] >= 24) green++;
+      const at = (frame.width * y + x) * 4;
+      if (uiGreen(frame.bgra[at], frame.bgra[at + 1], frame.bgra[at + 2])) green++;
     }
     rows = green >= 21 ? rows + 1 : 0;
     if (rows >= Math.max(3, start2.height / 4)) return true;
@@ -3794,7 +3823,7 @@ function preparation(frame, anchors) {
     const hasMode = modes.some((mode) => mode.y + mode.height < gear.y && gear.y - mode.y <= gear.height * 18 && Math.abs(mode.x - gear.x) <= 14 * Math.max(gear.width, mode.width));
     for (const button of [...boxes("squad"), ...hasMode ? boxes("deploy") : []]) {
       const gap = button.x - gear.x - gear.width;
-      if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) && Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(extent(gear, button));
+      if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) && Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(unionRect(gear, button));
     }
   }
   for (const start2 of boxes("start")) for (const action of actions) {
@@ -3916,7 +3945,6 @@ async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
 }
 
 // src/profile-identity.ts
-var compact2 = (value) => value.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
 var profileTitles = /* @__PURE__ */ new Set(["\u4E2A\u4EBA\u4FE1\u606F", "\u4E2A\u4EBA\u8D44\u6599", "\u4E2A\u4EBA\u6863\u6848", "\u6211\u7684\u8D44\u6599", "\u6211\u7684\u6863\u6848", "myprofile", "playerprofile", "playerinfo", "personalinformation"]);
 var nicknameLabel = /^(?:(?:玩\s*家\s*|游\s*戏\s*|角\s*色\s*)?昵\s*称|(?:player\s+name|nick\s*name))(?=\s|[:：]|$)[\s:：]*(.*)$/iu;
 var uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
@@ -3924,13 +3952,13 @@ var placeholders = /* @__PURE__ */ new Set(["\u533F\u540D\u73A9\u5BB6", "anonymo
 var profileTab = { x: 0.066, y: 0.047, width: 0.069, height: 0.047 };
 var watermarkFormat = /^(?:cn)?uid[:#]?(\d{8,24})(?:_\d+)?$/u;
 var playerNumberFormat = /^(?:编号|uid|playerid)[:#]?(\d{8,24})$/u;
-var isProfileTitle = (text) => profileTitles.has(compact2(text));
-var excludesOwnProfile = (text) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compact2(text));
+var isProfileTitle = (text) => profileTitles.has(compactLower(text));
+var excludesOwnProfile = (text) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compactLower(text));
 var hasNicknameLabel = (text) => nicknameLabel.test(text.trim());
 function validIdentityNickname(value) {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
   const name = value.trim();
-  return !placeholders.has(compact2(name)) && !uidField.test(name.normalize("NFKC"));
+  return !placeholders.has(compactLower(name)) && !uidField.test(name.normalize("NFKC"));
 }
 function adjacentValue(label, other) {
   const a = label.box, b = other.box;
@@ -3949,14 +3977,14 @@ function selectedProfileTab(frame, area) {
       const x = stripe.x + Math.floor((i + 0.5) * stripe.width / 16);
       const p = (y * frame.width + x) * 4;
       const b = frame.bgra[p], g = frame.bgra[p + 1], r = frame.bgra[p + 2];
-      if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+      if (uiGreen(b, g, r)) green++;
     }
     if (green >= 15) return true;
   }
   return false;
 }
 function accountNumber(lines, area, format) {
-  const matches = lines.filter((line) => contains(area, line.box)).map((line) => format.exec(compact2(line.text))?.[1]).filter(Boolean);
+  const matches = lines.filter((line) => contains(area, line.box)).map((line) => format.exec(compactLower(line.text))?.[1]).filter(Boolean);
   return matches.length === 1 ? matches[0] : void 0;
 }
 function frameLines(layout, frame) {
@@ -3989,7 +4017,7 @@ function cardIdentity(layout, frame, aspectRatio, labeledName) {
   let selected = false, inactiveCard = false, activeCard = false;
   for (const area of calibrationViewports(frame, aspectRatio)) {
     const tab = project(area, profileTab);
-    if (!lines.some((line) => contains(tab, line.box) && profileTitles.has(compact2(line.text)))) continue;
+    if (!lines.some((line) => contains(tab, line.box) && profileTitles.has(compactLower(line.text)))) continue;
     const { account, player } = cardAccounts(lines, area);
     if (account && player && account !== player) return { status: "profile-unrecognized" };
     if (!selectedProfileTab(frame, area)) {
@@ -4020,7 +4048,7 @@ function profileIdentity(layout, frame, aspectRatio = DEFAULT_GAME_ASPECT_RATIO)
     const neighbors = match[1] ? [match[1]] : lines.filter((other) => adjacentValue(line, other)).map((other) => other.text);
     if (neighbors.length !== 1) return { status: "nickname-unreadable" };
     const name = neighbors[0].trim();
-    if (!validIdentityNickname(name) || !/[\p{L}]/u.test(name) || /[:：]|\s(?:UID|玩家\s*ID)(?=[\s\d#=_-]|$)/iu.test(name) || profileTitles.has(compact2(name))) return { status: "nickname-unreadable" };
+    if (!validIdentityNickname(name) || !/[\p{L}]/u.test(name) || /[:：]|\s(?:UID|玩家\s*ID)(?=[\s\d#=_-]|$)/iu.test(name) || profileTitles.has(compactLower(name))) return { status: "nickname-unreadable" };
     candidates.add(name);
   }
   const [nickname] = candidates;
@@ -4132,7 +4160,6 @@ function profileNameRegion(frame, viewport, report) {
 // src/profile-recognition.ts
 var unreadable = { status: "nickname-unreadable" };
 var unrecognized = { status: "profile-unrecognized" };
-var compact3 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLowerCase();
 var historyTab = { x: 0.135, y: 0.047, width: 0.066, height: 0.047 };
 function singleLine(layout) {
   return layout && !layout.truncated && layout.lines.length === 1 ? layout.lines[0] : void 0;
@@ -4140,7 +4167,7 @@ function singleLine(layout) {
 async function readField(read, field, box, format) {
   for (const twice of [false, true]) {
     const line = singleLine(await read(field, box, twice));
-    const match = line && format.exec(compact3(line.text));
+    const match = line && format.exec(compactLower(line.text));
     if (match) return match[1];
   }
 }
@@ -4150,7 +4177,7 @@ async function recognizedTab(read, area) {
   for (const twice of [false, true]) {
     const line = singleLine(await read("profile-tab", box, twice));
     if (!line) continue;
-    const title = compact3(line.text);
+    const title = compactLower(line.text);
     if (isProfileTitle(title)) return "exact";
     if (new RegExp("^\\p{Script=Han}{4}$", "u").test(title) && [...title].filter((c, i) => c !== "\u4E2A\u4EBA\u4FE1\u606F"[i]).length === 1) nearTitle = true;
   }
@@ -4374,7 +4401,7 @@ function hasMatchingBanner(region) {
   for (const y of [10, 20, 30]) for (let column = 0; column < columns; column++) {
     const x = Math.floor((column + 0.5) * region.width / columns), at = (y * region.width + x) * 4;
     const b = region.bgra[at], g = region.bgra[at + 1], r = region.bgra[at + 2];
-    if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+    if (uiGreen(b, g, r)) green++;
   }
   return green >= 42;
 }
@@ -4858,11 +4885,8 @@ function simulate(message) {
     rgba[i + 3] = 255;
   }
   const full = import_jpeg_js3.default.encode({ data: rgba, width, height }, 90).data, decoded = import_jpeg_js3.default.decode(full, { useTArray: true });
-  const crop = { x: 64, y: 0, width: 64, height: 40 }, cropped = Buffer.alloc(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start2 = ((crop.y + y) * width + crop.x) * 4;
-    cropped.set(decoded.data.subarray(start2, start2 + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = { x: 64, y: 0, width: 64, height: 40 };
+  const cropped = copyPixelRect(decoded.data, width, crop.x, crop.y, crop.width, crop.height);
   const display = latest.display;
   send({
     kind: "event",

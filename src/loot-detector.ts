@@ -8,13 +8,15 @@ import { matchesCalibration } from './detector.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_CONTEXT_PIXELS,
   DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_REFERENCES, DELTA_MAX_LOOT_ROI_AREA, DELTA_MAX_ROI_PIXELS,
   DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
+import { unionRect } from './rect.ts';
+import { copyPixelRect } from './image.ts';
+import { compact, stripWhitespace, upperNFKC } from './text.ts';
 import type { DeltaDetectionConfig, DeltaLootCalibration, DeltaLootConfig, DeltaLootScene, DeltaLootSensitivity, DeltaLootState, DeltaRecognition, DeltaRoi } from './protocol.ts';
 
 export interface LootItemCandidate { box: DeltaOcrBox; signature: Uint8Array }
 export interface LootMatch { dedupKey: string; signature: Uint8Array; recognition: Extract<DeltaRecognition, { kind: 'loot-candidate' }> }
 export function lootCaptureRoi(calibration: DeltaLootCalibration): DeltaRoi {
-  const a = calibration.itemsRoi, b = calibration.contextRoi, x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+  return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
 export function lootCalibrationFitsBudget(calibration: DeltaLootCalibration): boolean {
   try {
@@ -35,14 +37,14 @@ export function lootStatus(config: DeltaLootConfig, combat?: DeltaDetectionConfi
 }
 export function parseLootContext(layout: DeltaOcrLayout): DeltaLootScene | null {
   if (layout.truncated) return null;
-  const text = layout.lines.map((line) => line.text).join(' ').normalize('NFKC').toUpperCase();
-  const compact = text.replace(/\s+/gu, ''), contains = (pattern: RegExp) => pattern.test(text) || pattern.test(compact);
+  const text = upperNFKC(layout.lines.map((line) => line.text).join(' '));
+  const folded = stripWhitespace(text), contains = (pattern: RegExp) => pattern.test(text) || pattern.test(folded);
   const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains).length;
   if (!classes) return null;
   if (contains(/容器|搜索物资|\bCONTAINER\b/u)) return 'container';
   if (contains(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return 'loot';
   const capacityHeading = layout.lines.some((line) => {
-    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(line.text.normalize('NFKC').replace(/\s+/gu, ''));
+    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(compact(line.text));
     return match && Number(match[2]) > 0 && Number(match[1]) <= Number(match[2]);
   });
   if (capacityHeading) return 'inventory';
@@ -203,20 +205,14 @@ export function lootNamespace(region: Pick<CapturedRegion, 'display' | 'topology
 function evidenceRegions(evidence: CapturedEvidence, calibration: DeltaLootCalibration): { items: CapturedEvidence; context: CapturedRegion } {
   const { width, height } = calibration.display.bounds, union = captureRectangle(lootCaptureRoi(calibration), width, height);
   const extract = (roi: DeltaRoi): CapturedRegion => {
-    const box = captureRectangle(roi, width, height), data = new Uint8Array(box.width * box.height * 4);
+    const box = captureRectangle(roi, width, height);
     if (evidence.region.width !== union.width || evidence.region.height !== union.height) throw new Error('Invalid native item evidence dimensions');
-    for (let y = 0; y < box.height; y++) {
-      const start = ((box.y - union.y + y) * union.width + box.x - union.x) * 4;
-      data.set(evidence.region.bgra.subarray(start, start + box.width * 4), y * box.width * 4);
-    }
+    const data = copyPixelRect(evidence.region.bgra, union.width, box.x - union.x, box.y - union.y, box.width, box.height);
     return { ...evidence.region, width: box.width, height: box.height, bgra: data };
   };
   const decoded = jpeg.decode(evidence.capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height), rgba = new Uint8Array(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * decoded.width + crop.x) * 4;
-    rgba.set(decoded.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height);
+  const rgba = copyPixelRect(decoded.data, decoded.width, crop.x, crop.y, crop.width, crop.height);
   return { items: { capture: evidence.capture, region: extract(calibration.itemsRoi), crop,
     cropJpeg: jpeg.encode({ data: rgba, width: crop.width, height: crop.height }, 90).data }, context: extract(calibration.contextRoi) };
 }

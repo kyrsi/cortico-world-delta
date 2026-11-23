@@ -1,12 +1,13 @@
 /** Read-only Windows capture for hosts without a desktop observation API. */
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jpeg from 'jpeg-js';
 import type { CuaDisplay } from 'cortico-world-desktop-pet';
 import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import type { DeltaCapture, DeltaFrameSource } from './engine-ipc.ts';
+import { copyPixelRect } from './image.ts';
+import { powershellExecutable } from './powershell.ts';
 import type { DeltaRoi } from './protocol.ts';
 import { captureRectangle } from './roi.ts';
 
@@ -39,7 +40,7 @@ function transportFailure(message: string) {
 
 function openNativeCapture() {
   if (process.platform !== 'win32') throw new Error('Standalone screen capture requires Windows');
-  const command = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const command = powershellExecutable();
   const helper = spawn(command, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', bootstrap], {
     shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, DELTA_CAPTURE_SOURCE: nativeSource },
@@ -132,11 +133,7 @@ export async function listDisplays(): Promise<CuaDisplay[]> {
 function cropPreview(image: Uint8Array, roi: DeltaRoi, width: number, height: number) {
   const crop = captureRectangle(roi, width, height);
   const full = jpeg.decode(image, { useTArray: true });
-  const data = Buffer.allocUnsafe(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * width + crop.x) * 4;
-    data.set(full.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const data = copyPixelRect(full.data, width, crop.x, crop.y, crop.width, crop.height);
   return { crop, cropJpeg: jpeg.encode({ width: crop.width, height: crop.height, data }, 75).data };
 }
 

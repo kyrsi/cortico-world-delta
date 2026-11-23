@@ -2183,8 +2183,23 @@ var require_jpeg_js = __commonJS({
 var import_jpeg_js = __toESM(require_jpeg_js(), 1);
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// src/image.ts
+function copyPixelRect(source, sourceWidth, x, y, width, height) {
+  const target = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row++) {
+    const start = ((y + row) * sourceWidth + x) * 4;
+    target.set(source.subarray(start, start + width * 4), row * width * 4);
+  }
+  return target;
+}
+
+// src/powershell.ts
+import { join } from "node:path";
+function powershellExecutable() {
+  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
 
 // src/roi.ts
 function captureRoi(value) {
@@ -2216,7 +2231,7 @@ function transportFailure(message) {
 }
 function openNativeCapture() {
   if (process.platform !== "win32") throw new Error("Standalone screen capture requires Windows");
-  const command = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const command = powershellExecutable();
   const helper = spawn(command, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", bootstrap], {
     shell: false,
     windowsHide: true,
@@ -2326,11 +2341,7 @@ async function listDisplays() {
 function cropPreview(image, roi, width, height) {
   const crop = captureRectangle(roi, width, height);
   const full = import_jpeg_js.default.decode(image, { useTArray: true });
-  const data = Buffer.allocUnsafe(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * width + crop.x) * 4;
-    data.set(full.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const data = copyPixelRect(full.data, width, crop.x, crop.y, crop.width, crop.height);
   return { crop, cropJpeg: import_jpeg_js.default.encode({ width: crop.width, height: crop.height, data }, 75).data };
 }
 function createFrameSource() {

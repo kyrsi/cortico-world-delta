@@ -6,6 +6,7 @@ import type { CalibrationWorkerRequest, CalibrationWorkerResult, DeltaCapture, D
 import { encodeIdentityFrame } from './identity-debug-png.ts';
 import { DELTA_MAX_JPEG_BYTES } from './limits.ts';
 import { createOcr } from './ocr.ts';
+import { uiGreen } from './pixels.ts';
 import { DEFAULT_GAME_ASPECT_RATIO, type DeltaGameAspectRatio, type DeltaGameLanguage } from './protocol.ts';
 
 // The resized preview still requires a native capture buffer.
@@ -18,7 +19,7 @@ function hasMatchingBanner(region: CapturedRegion): boolean {
   for (const y of [10, 20, 30]) for (let column = 0; column < columns; column++) {
     const x = Math.floor((column + 0.5) * region.width / columns), at = (y * region.width + x) * 4;
     const b = region.bgra[at]!, g = region.bgra[at + 1]!, r = region.bgra[at + 2]!;
-    if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+    if (uiGreen(b, g, r)) green++;
   }
   return green >= 42;
 }

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { powershellExecutable } from './powershell.ts';
 import type { DeltaCalibrationHotkeyPort } from './protocol.ts';
 
 const source = fileURLToPath(new URL('../src/standalone/CalibrationHotkey.cs', import.meta.url));
@@ -15,7 +15,7 @@ export const windowsCalibrationHotkey: DeltaCalibrationHotkeyPort = {
     let exited: Promise<void>;
     void retiring.then(() => {
       if (released) return;
-      const command = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      const command = powershellExecutable();
       const helper = spawn(command, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
         windowsHide: true, env: { ...process.env, DELTA_HOTKEY_SOURCE: source }, stdio: ['pipe', 'pipe', 'pipe'],
       });

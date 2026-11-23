@@ -1,8 +1,9 @@
 /** Windows OCR runs in one hidden system PowerShell process and receives only bounded ROI pixels. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
+import { powershellExecutable } from './powershell.ts';
+import { unionRects } from './rect.ts';
 import type { DeltaGameLanguage } from './protocol.ts';
 import { DELTA_MAX_ROI_PIXELS } from './limits.ts';
 
@@ -94,11 +95,6 @@ try {
 } catch { @{kind='error'; message=$_.Exception.Message} | ConvertTo-Json -Compress; exit 1 }
 `;
 
-function union(boxes: readonly DeltaOcrBox[]): DeltaOcrBox {
-  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
-  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
-}
-
 function sourceBox(value: unknown, width: number, height: number, angle: number): DeltaOcrBox {
   const box = value as DeltaOcrBox;
   if (!box || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) throw new Error('Invalid Windows OCR box');
@@ -129,7 +125,7 @@ function parseLayout(value: Record<string, unknown>, region: CapturedRegion): De
       if (!box.width || !box.height) { result.truncated = true; continue; }
       words.push({ text: word.text, box });
     }
-    if (words.length) lines.push({ text: line.text, words, box: union(words.map((word) => word.box)) });
+    if (words.length) lines.push({ text: line.text, words, box: unionRects(words.map((word) => word.box)) });
     else result.truncated = true;
   }
   result.lines = lines;
@@ -143,7 +139,7 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
     .replaceAll('__MAX_LINES__', String(DELTA_OCR_LIMITS.maxLines)).replaceAll('__MAX_WORDS__', String(DELTA_OCR_LIMITS.maxWords))
     .replaceAll('__MAX_LINE_CHARS__', String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll('__MAX_WORD_CHARS__', String(DELTA_OCR_LIMITS.maxWordChars));
   const command = Buffer.from(source, 'utf16le').toString('base64');
-  const child: ChildProcessWithoutNullStreams = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+  const child: ChildProcessWithoutNullStreams = spawn(powershellExecutable(),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   let closed = false;
   let markExited = () => {};

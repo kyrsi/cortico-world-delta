@@ -6,6 +6,7 @@ import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { runCalibrationCapture } from './calibration-capture.ts';
 import { Detector, detectionStatus, matchesCalibration } from './detector.ts';
 import { DELTA_DEFAULTS } from './config.ts';
+import { copyPixelRect } from './image.ts';
 import { LootDetector, lootCaptureRoi, lootStatus } from './loot-detector.ts';
 import { SharedOcr } from './shared-ocr.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS } from './limits.ts';
@@ -146,11 +147,8 @@ function simulate(message: Extract<MainToChild, { kind: 'simulate' }>): void {
     rgba[i] = color[0]! + x % 30; rgba[i + 1] = color[1]! + y % 30; rgba[i + 2] = color[2]!; rgba[i + 3] = 255;
   }
   const full = jpeg.encode({ data: rgba, width, height }, 90).data, decoded = jpeg.decode(full, { useTArray: true });
-  const crop = { x: 64, y: 0, width: 64, height: 40 }, cropped = Buffer.alloc(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * width + crop.x) * 4;
-    cropped.set(decoded.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = { x: 64, y: 0, width: 64, height: 40 };
+  const cropped = copyPixelRect(decoded.data, width, crop.x, crop.y, crop.width, crop.height);
   const display = latest.display;
   send({ kind: 'event', generation, requestId: message.requestId, id: message.eventId, eventKind: message.eventKind, dedupKey: message.dedupKey, synthetic: true, recognition: null,
     capture: { jpeg: full, frame: { ...latest, frameId: randomUUID(), capturedAt: new Date().toISOString(), width, height,

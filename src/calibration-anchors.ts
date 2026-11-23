@@ -4,7 +4,9 @@ import { measureSafeBox } from './calibration-anchors-grid.ts';
 import { calibrationViewports, project } from './calibration-viewport.ts';
 import type { DeltaOcrBox as Box, DeltaOcrLine, DeltaOcrPort } from './ocr.ts';
 import { doubleOcrRaster } from './personal-text-fallback.ts';
+import { bgraGray, uiGreen } from './pixels.ts';
 import type { DeltaCalibrationRegions, DeltaRoi } from './protocol.ts';
+import { unionRect } from './rect.ts';
 
 export type CalibrationAnchors =
   | { scene: 'preparation'; start: DeltaRoi; actions: DeltaRoi }
@@ -19,10 +21,6 @@ const labels = {
 type Label = keyof typeof labels;
 type Anchor = { label: Label; box: Box };
 const labelPatterns = Object.entries(labels) as [Label, RegExp][];
-const extent = (a: Box, b: Box): Box => {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-};
 
 function lineAnchors(line: DeltaOcrLine): Anchor[] {
   const result: Anchor[] = [];
@@ -32,7 +30,7 @@ function lineAnchors(line: DeltaOcrLine): Anchor[] {
       const word = line.words[last]!;
       text += word.text.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
       if (text.length > 16) break;
-      box = extent(box, word.box);
+      box = unionRect(box, word.box);
       const label = labelPatterns.find(([name, pattern]) => pattern.test(name === 'safe' ? text.replace(/[:;：；]+$/u, '') : text))?.[0];
       if (!label) continue;
       // Windows can merge adjacent controls into one line. Require an independent label within that line.
@@ -54,7 +52,7 @@ export function scanRaster(frame: CapturedRegion, box: Box, enlargeText: boolean
     for (let y = 0, i = 0; y < box.height; y++) {
       let at = ((box.y + y) * frame.width + box.x) * 4;
       for (let x = 0; x < box.width; x++, i++, at += 4) {
-        gray[i] = (frame.bgra[at]! * 3735 + frame.bgra[at + 1]! * 19235 + frame.bgra[at + 2]! * 9798 + 16384) >> 15;
+        gray[i] = bgraGray(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!);
       }
     }
     return doubleOcrRaster(gray, box.width, box.height);
@@ -90,8 +88,8 @@ function matchingBanner(frame: CapturedRegion, start: Box, action: Box) {
     let green = 0;
     for (let column = 0; column < count; column++) {
       const x = start.x + Math.floor((column + .5) * span / count);
-      const at = (frame.width * y + x) * 4, g = frame.bgra[at + 1]!;
-      if (g >= 105 && g - frame.bgra[at + 2]! >= 48 && g - frame.bgra[at]! >= 24) green++;
+      const at = (frame.width * y + x) * 4;
+      if (uiGreen(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!)) green++;
     }
     rows = green >= 21 ? rows + 1 : 0;
     if (rows >= Math.max(3, start.height / 4)) return true;
@@ -109,7 +107,7 @@ function preparation(frame: CapturedRegion, anchors: Anchor[]): CalibrationAncho
     for (const button of [...boxes('squad'), ...(hasMode ? boxes('deploy') : [])]) {
       const gap = button.x - gear.x - gear.width;
       if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) &&
-        Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(extent(gear, button));
+        Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(unionRect(gear, button));
     }
   }
   for (const start of boxes('start')) for (const action of actions) {

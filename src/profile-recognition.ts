@@ -7,10 +7,10 @@ import { cardAccounts, cardNameLine, excludesOwnProfile, frameLines, hasNickname
   profileTab, selectedProfileTab, validCardName, watermarkFormat } from './profile-identity.ts';
 import { profileNameRegion } from './profile-name-region.ts';
 import type { DeltaGameAspectRatio, DeltaIdentitySuggestion } from './protocol.ts';
+import { compactLower } from './text.ts';
 
 const unreadable = { status: 'nickname-unreadable' } as const;
 const unrecognized = { status: 'profile-unrecognized' } as const;
-const compact = (text: string) => text.normalize('NFKC').replace(/\s+/gu, '').toLowerCase();
 const historyTab = { x: .135, y: .047, width: .066, height: .047 };
 type TileField = Exclude<ProfileOcrField, 'overview'>;
 type ReadTile = (field: TileField, box: Box, twice: boolean) => Promise<DeltaOcrLayout | undefined>;
@@ -22,7 +22,7 @@ function singleLine(layout: DeltaOcrLayout | undefined) {
 async function readField(read: ReadTile, field: TileField, box: Box, format: RegExp): Promise<string | undefined> {
   for (const twice of [false, true]) {
     const line = singleLine(await read(field, box, twice));
-    const match = line && format.exec(compact(line.text));
+    const match = line && format.exec(compactLower(line.text));
     if (match) return match[1];
   }
 }
@@ -33,7 +33,7 @@ async function recognizedTab(read: ReadTile, area: Box): Promise<ProfileTitleEvi
   for (const twice of [false, true]) {
     const line = singleLine(await read('profile-tab', box, twice));
     if (!line) continue;
-    const title = compact(line.text);
+    const title = compactLower(line.text);
     if (isProfileTitle(title)) return 'exact';
     if (/^\p{Script=Han}{4}$/u.test(title) && [...title].filter((c, i) => c !== '个人信息'[i]).length === 1) nearTitle = true;
   }

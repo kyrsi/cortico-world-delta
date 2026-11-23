@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { DeltaCapture } from './engine-ipc.ts';
 import { DELTA_REVEAL_MAX_SCREENSHOTS } from './limits.ts';
+import { retainNewestFiles } from './retain-files.ts';
 
 const revealName = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-(?:preview|full|crop)-[\da-f]{64}\.jpg$/;
 
@@ -48,29 +49,6 @@ export async function revealCapture(options: ScreenshotReveal, capture: DeltaCap
       throw error;
     }
   }
-  pruneRevealDirectory(directory, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
+  retainNewestFiles(directory, revealName, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
   await options.open(filePath);
-}
-
-function pruneRevealDirectory(directory: string, keepName: string, maxFiles: number): void {
-  const ranked: { name: string; mtimeMs: number }[] = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !revealName.test(entry.name)) continue;
-    const stat = lstatSync(join(directory, entry.name), { throwIfNoEntry: false });
-    if (!stat || !stat.isFile() || stat.nlink !== 1) continue;
-    ranked.push({ name: entry.name, mtimeMs: stat.mtimeMs });
-  }
-  ranked.sort((a, b) => a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  let extras = ranked.length - maxFiles;
-  for (const item of ranked) {
-    if (extras <= 0) break;
-    if (item.name === keepName) continue;
-    extras--;
-    try {
-      const path = join(directory, item.name);
-      const stat = lstatSync(path);
-      if (!stat.isFile() || stat.nlink !== 1) continue;
-      unlinkSync(path);
-    } catch { /* Leave a file that cannot be removed. */ }
-  }
 }

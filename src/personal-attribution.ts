@@ -4,6 +4,7 @@ import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet
 import type { DeltaOcrLayout } from './ocr.ts';
 import { captureRectangle } from './roi.ts';
 import { DELTA_MAX_ROI_PIXELS } from './limits.ts';
+import { compactUpper } from './text.ts';
 
 export const PERSONAL_ATTRIBUTION_ROI = { x: 0, y: 0.82, width: 1, height: 0.18 } as const;
 export const PERSONAL_ATTRIBUTION_LIMITS = { scale: 2, maxPixels: DELTA_MAX_ROI_PIXELS, footerStart: 0.6 } as const;
@@ -51,15 +52,14 @@ export function personalAttributionRegion(evidence: CapturedEvidence): PersonalA
 /** `own` means the footer contains no explicit spectator controls, not a nickname match. */
 export function parsePersonalAttribution(layout: DeltaOcrLayout, nickname: string, spectatorFrame = false): 'own' | 'other' | 'unknown' {
   if (layout.truncated || !layout.lines.some((line) => line.text.trim())) return 'unknown';
-  const compact = (text: string) => text.normalize('NFKC').replace(/\s+/gu, '').toLocaleUpperCase('en-US');
   const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart)
-    .map((line) => compact(line.text)).join(' ');
+    .map((line) => compactUpper(line.text)).join(' ');
   const controls = [/切换观战(?:对象)?|SWITCHSPECTAT/u, /观战名片|SPECTATORCARD/u, /退出观战|EXITSPECTAT/u];
   if (controls.filter((control) => control.test(footer)).length >= 2) return 'other';
   const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62
     && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4)
-    .sort((a, b) => a.box.x - b.box.x).map((line) => compact(line.text)).join('');
+    .sort((a, b) => a.box.x - b.box.x).map((line) => compactUpper(line.text)).join('');
   const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25
-    && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compact(line.text)));
-  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compact(nickname) ? 'other' : 'own';
+    && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compactUpper(line.text)));
+  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compactUpper(nickname) ? 'other' : 'own';
 }
