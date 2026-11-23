@@ -28,9 +28,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js
+// node_modules/jpeg-js/lib/encoder.js
 var require_encoder = __commonJS({
-  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/encoder.js"(exports, module) {
+  "node_modules/jpeg-js/lib/encoder.js"(exports, module) {
     var btoa = btoa || function(buf) {
       return Buffer.from(buf).toString("base64");
     };
@@ -1105,9 +1105,9 @@ var require_encoder = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js
+// node_modules/jpeg-js/lib/decoder.js
 var require_decoder = __commonJS({
-  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/lib/decoder.js"(exports, module) {
+  "node_modules/jpeg-js/lib/decoder.js"(exports, module) {
     var JpegImage = (function jpegImage() {
       "use strict";
       var dctZigZag = new Int32Array([
@@ -2167,9 +2167,9 @@ var require_decoder = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js
+// node_modules/jpeg-js/index.js
 var require_jpeg_js = __commonJS({
-  "node_modules/.pnpm/jpeg-js@0.4.4/node_modules/jpeg-js/index.js"(exports, module) {
+  "node_modules/jpeg-js/index.js"(exports, module) {
     var encode = require_encoder();
     var decode = require_decoder();
     module.exports = {
@@ -3525,11 +3525,18 @@ var package_default = {
   engines: { node: ">=22" },
   os: ["win32"],
   scripts: {
-    build: "node scripts/build.mjs"
+    build: "node scripts/build.mjs",
+    test: 'node --import tsx --test "tests/*.test.mjs"',
+    typecheck: "tsc -p ."
   },
   devDependencies: {
+    "@types/node": "22.20.4",
+    cortico: "0.2.17",
     esbuild: "0.28.2",
-    "jpeg-js": "0.4.4"
+    "jpeg-js": "0.4.4",
+    jsdom: "30.1.0",
+    tsx: "4.23.15",
+    typescript: "5.9.3"
   },
   cortico: {
     kind: "world",

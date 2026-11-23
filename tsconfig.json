@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "paths": {
+      "cortico-world-desktop-pet": ["./types/cortico-world-desktop-pet.d.ts"],
+      "cortico-world-desktop-pet/capture": ["./types/cortico-world-desktop-pet-capture.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

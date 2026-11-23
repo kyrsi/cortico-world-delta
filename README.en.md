@@ -40,10 +40,12 @@ To end a session, stop observation. To uninstall, deactivate the World, remove i
 
 ## Development
 
-Use Node.js 22 or later to rebuild the extension from the repository root.
+Use Node.js 22 or later. From the repository root, install dependencies, run the tests, and typecheck. After a source change, rebuild and reload the extension in a compatible host.
 
 ```powershell
 npm ci
+npm test
+npm run typecheck
 npm run build
 ```
 

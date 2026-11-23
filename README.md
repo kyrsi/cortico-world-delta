@@ -57,10 +57,12 @@
 
 ## 开发
 
-仓库包含 World 源码、Windows 识别进程、设置面板、知识文件和预构建产物。修改源码后，在仓库根目录重新构建，再在兼容宿主中重新加载扩展。
+仓库包含 World 源码、Windows 识别进程、设置面板、知识文件和预构建产物。在仓库根目录安装依赖、运行测试并检查类型；修改源码后重新构建，再在兼容宿主中重新加载扩展。
 
 ```powershell
 npm ci
+npm test
+npm run typecheck
 npm run build
 ```
 
