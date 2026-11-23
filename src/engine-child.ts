@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import type { CuaFrame } from 'cortico-world-desktop-pet';
+import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { runCalibrationCapture } from './calibration-capture.ts';
 import { Detector, detectionStatus, matchesCalibration } from './detector.ts';
 import { DELTA_DEFAULTS } from './config.ts';
@@ -65,33 +66,55 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
     sampling = (async () => {
       try {
         const calibration = settings.detection.calibration;
-        // Read display geometry before applying any saved region to the selected source.
-        const region = await source!.captureRoi(displayId, { x: 0, y: 0, width: 0.000001, height: 0.000001 });
-        if (!active) return;
+        const detect = !!(settings.detection.enabled && calibration && !detector?.status.reason);
+        const lootReady = !!(loot.enabled && loot.calibration && !lootDetector?.status.reason);
+        const lootDue = lootReady && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS;
+        const rois = detect ? [calibration.roi, ...(calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : [])] : [];
+        if (lootDue && loot.calibration) rois.push(loot.calibration.itemsRoi);
+        // No saved region needs pixels; the probe still publishes display geometry.
+        if (!rois.length) rois.push({ x: 0, y: 0, width: 0.000001, height: 0.000001 });
+        const regions: CapturedRegion[] = [];
+        if (rois.length > 1 && source!.captureRois) {
+          regions.push(...await source!.captureRois(displayId, rois));
+          if (!active) return;
+          if (regions.length !== rois.length) throw Object.assign(new Error('Incomplete capture'), { code: 'captureFailed' });
+          captures += regions.length;
+        } else for (const roi of rois) {
+          regions.push(await source!.captureRoi(displayId, roi));
+          if (!active) return;
+          captures++;
+        }
+        const region = regions[0]!;
         const bounds = region.display.bounds, scale = Math.min(1, 1280 / bounds.width, 800 / bounds.height);
         const width = Math.max(1, Math.round(bounds.width * scale)), height = Math.max(1, Math.round(bounds.height * scale));
         latest = { frameId: randomUUID(), capturedAt: region.capturedAt, display: region.display, topologyRevision: region.topologyRevision,
           width, height, mime: 'image/jpeg', transform: { originX: bounds.x, originY: bounds.y, scaleX: width / bounds.width, scaleY: height / bounds.height } };
-        captures++;
-        let sampledSource = region;
+        let cursor = 0, sampledSource = region;
         const checks = startupCheck(latest, settings.detection, loot);
-        if (checks.detection.status === 'compatible' && !detector?.status.reason && calibration) {
-          const feed = await source!.captureRoi(displayId, calibration.roi);
-          if (!active) return;
-          captures++; sampledSource = feed;
-          if (calibration.personalFeedbackRoi && matchesCalibration(feed, calibration)) {
-            const personal = await source!.captureRoi(displayId, calibration.personalFeedbackRoi);
-            if (!active) return;
-            captures++; sampledSource = personal; detector?.submit(personal);
-          } else detector?.submit(feed);
-        } else if (checks.detection.status === 'invalid') detector?.submit(region);
-        const lootSourceMatches = !!loot.calibration && matchesCalibration(sampledSource, { ...loot.calibration, roi: loot.calibration.itemsRoi });
+        if (detect && calibration) {
+          const feed = regions[cursor++]!;
+          // Pixels from this snapshot are submitted only when they still match the saved calibration.
+          if (checks.detection.status === 'compatible') {
+            sampledSource = feed;
+            if (calibration.personalFeedbackRoi && matchesCalibration(feed, calibration)) {
+              sampledSource = regions[cursor++]!; detector?.submit(sampledSource);
+            } else {
+              if (calibration.personalFeedbackRoi) cursor++;
+              detector?.submit(feed);
+            }
+          } else {
+            if (calibration.personalFeedbackRoi) cursor++;
+            if (checks.detection.status === 'invalid') detector?.submit(feed);
+          }
+        } else if (checks.detection.status === 'invalid') detector?.submit(sampledSource);
+        const lootCalibration = loot.calibration;
+        const lootSourceMatches = !!lootCalibration && matchesCalibration(sampledSource, { ...lootCalibration, roi: lootCalibration.itemsRoi });
         if (checks.loot.status === 'invalid' || loot.enabled && !lootSourceMatches) lootDetector?.submit(sampledSource);
-        if (checks.loot.status === 'compatible' && loot.calibration && lootSourceMatches && !lootDetector?.status.reason && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          lastLootAtMs = Date.now();
-          const items = await source!.captureRoi(displayId, loot.calibration.itemsRoi);
+        if (lootReady && lootCalibration && checks.loot.status === 'compatible' && lootSourceMatches && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
+          const items = lootDue ? regions[cursor++]! : await source!.captureRoi(displayId, lootCalibration.itemsRoi);
+          if (!lootDue) captures++;
           if (!active) return;
-          captures++; lootDetector?.submit(items);
+          lastLootAtMs = Date.now(); lootDetector?.submit(items);
         }
         publish();
         captureTimer = setTimeout(sample, settings.captureIntervalMs);

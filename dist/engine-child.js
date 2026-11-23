@@ -4751,8 +4751,24 @@ async function start(message) {
     sampling = (async () => {
       try {
         const calibration2 = settings.detection.calibration;
-        const region = await source.captureRoi(displayId, { x: 0, y: 0, width: 1e-6, height: 1e-6 });
-        if (!active) return;
+        const detect = !!(settings.detection.enabled && calibration2 && !detector?.status.reason);
+        const lootReady = !!(loot.enabled && loot.calibration && !lootDetector?.status.reason);
+        const lootDue = lootReady && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS;
+        const rois = detect ? [calibration2.roi, ...calibration2.personalFeedbackRoi ? [calibration2.personalFeedbackRoi] : []] : [];
+        if (lootDue && loot.calibration) rois.push(loot.calibration.itemsRoi);
+        if (!rois.length) rois.push({ x: 0, y: 0, width: 1e-6, height: 1e-6 });
+        const regions = [];
+        if (rois.length > 1 && source.captureRois) {
+          regions.push(...await source.captureRois(displayId, rois));
+          if (!active) return;
+          if (regions.length !== rois.length) throw Object.assign(new Error("Incomplete capture"), { code: "captureFailed" });
+          captures += regions.length;
+        } else for (const roi of rois) {
+          regions.push(await source.captureRoi(displayId, roi));
+          if (!active) return;
+          captures++;
+        }
+        const region = regions[0];
         const bounds = region.display.bounds, scale = Math.min(1, 1280 / bounds.width, 800 / bounds.height);
         const width = Math.max(1, Math.round(bounds.width * scale)), height = Math.max(1, Math.round(bounds.height * scale));
         latest = {
@@ -4765,29 +4781,32 @@ async function start(message) {
           mime: "image/jpeg",
           transform: { originX: bounds.x, originY: bounds.y, scaleX: width / bounds.width, scaleY: height / bounds.height }
         };
-        captures++;
-        let sampledSource = region;
+        let cursor = 0, sampledSource = region;
         const checks = startupCheck(latest, settings.detection, loot);
-        if (checks.detection.status === "compatible" && !detector?.status.reason && calibration2) {
-          const feed = await source.captureRoi(displayId, calibration2.roi);
-          if (!active) return;
-          captures++;
-          sampledSource = feed;
-          if (calibration2.personalFeedbackRoi && matchesCalibration(feed, calibration2)) {
-            const personal = await source.captureRoi(displayId, calibration2.personalFeedbackRoi);
-            if (!active) return;
-            captures++;
-            sampledSource = personal;
-            detector?.submit(personal);
-          } else detector?.submit(feed);
-        } else if (checks.detection.status === "invalid") detector?.submit(region);
-        const lootSourceMatches = !!loot.calibration && matchesCalibration(sampledSource, { ...loot.calibration, roi: loot.calibration.itemsRoi });
+        if (detect && calibration2) {
+          const feed = regions[cursor++];
+          if (checks.detection.status === "compatible") {
+            sampledSource = feed;
+            if (calibration2.personalFeedbackRoi && matchesCalibration(feed, calibration2)) {
+              sampledSource = regions[cursor++];
+              detector?.submit(sampledSource);
+            } else {
+              if (calibration2.personalFeedbackRoi) cursor++;
+              detector?.submit(feed);
+            }
+          } else {
+            if (calibration2.personalFeedbackRoi) cursor++;
+            if (checks.detection.status === "invalid") detector?.submit(feed);
+          }
+        } else if (checks.detection.status === "invalid") detector?.submit(sampledSource);
+        const lootCalibration = loot.calibration;
+        const lootSourceMatches = !!lootCalibration && matchesCalibration(sampledSource, { ...lootCalibration, roi: lootCalibration.itemsRoi });
         if (checks.loot.status === "invalid" || loot.enabled && !lootSourceMatches) lootDetector?.submit(sampledSource);
-        if (checks.loot.status === "compatible" && loot.calibration && lootSourceMatches && !lootDetector?.status.reason && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          lastLootAtMs = Date.now();
-          const items = await source.captureRoi(displayId, loot.calibration.itemsRoi);
+        if (lootReady && lootCalibration && checks.loot.status === "compatible" && lootSourceMatches && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
+          const items = lootDue ? regions[cursor++] : await source.captureRoi(displayId, lootCalibration.itemsRoi);
+          if (!lootDue) captures++;
           if (!active) return;
-          captures++;
+          lastLootAtMs = Date.now();
           lootDetector?.submit(items);
         }
         publish();

@@ -26,10 +26,11 @@ interface Header {
   roiHeight: number;
   jpegLength: number;
   bgraLength: number;
+  regions?: { width: number; height: number; length: number }[];
   error?: string;
 }
 
-type Operation = 'list' | 'frame' | 'region' | 'evidence';
+type Operation = 'list' | 'frame' | 'region' | 'evidence' | 'regions';
 interface Reply { header: Header; jpeg: Buffer; bgra: Buffer }
 
 function transportFailure(message: string) {
@@ -78,7 +79,7 @@ function openNativeCapture() {
   }
 
   let queue: Promise<void> = Promise.resolve();
-  function request(op: Operation, displayId?: string, roi?: DeltaRoi): Promise<Reply> {
+  function request(op: Operation, displayId?: string, roi?: DeltaRoi, rois?: readonly DeltaRoi[]): Promise<Reply> {
     const next = queue.then(async () => {
       if (closed) throw transportFailure(diagnostic.trim() || 'Screen capture process closed');
       // The binary response is framed; a timed-out or incomplete response invalidates this pipe.
@@ -87,8 +88,9 @@ function openNativeCapture() {
       let header: Header;
       let image: Buffer, pixels: Buffer;
       try {
+        const body = rois ? { op, displayId, rois } : { op, displayId, roi };
         await new Promise<void>((resolve, reject) => {
-          helper.stdin.write(JSON.stringify({ op, displayId, roi }) + '\n', error => error ? reject(error) : resolve());
+          helper.stdin.write(JSON.stringify(body) + '\n', error => error ? reject(error) : resolve());
         });
         const headerSize = (await read(4, 4)).readUInt32LE();
         header = JSON.parse((await read(headerSize, 256 * 1024)).toString('utf8')) as Header;
@@ -159,9 +161,36 @@ export function createFrameSource(): DeltaFrameSource {
   function region({ header, bgra, meta }: Sample): CapturedRegion {
     return { ...meta, width: header.roiWidth, height: header.roiHeight, bgra };
   }
+  function splitRegions(sample: Sample, count: number): CapturedRegion[] {
+    const parts = sample.header.regions;
+    if (!parts || parts.length !== count) throw Object.assign(new Error('Incomplete capture'), { code: 'captureFailed' });
+    let offset = 0;
+    const regions = parts.map(part => {
+      const bytes = part.length;
+      if (!Number.isInteger(part.width) || !Number.isInteger(part.height) || !Number.isInteger(bytes) || part.width < 1 || part.height < 1
+        || bytes !== part.width * part.height * 4 || offset + bytes > sample.bgra.length) {
+        throw Object.assign(new Error('Invalid capture region size'), { code: 'captureFailed' });
+      }
+      const bgra = sample.bgra.subarray(offset, offset + bytes);
+      offset += bytes;
+      return { ...sample.meta, width: part.width, height: part.height, bgra };
+    });
+    if (offset !== sample.bgra.length) throw Object.assign(new Error('Invalid capture region size'), { code: 'captureFailed' });
+    return regions;
+  }
   return {
     capture: async id => frame(await capture('frame', id)),
     captureRoi: async (id, roi) => region(await capture('region', id, roi)),
+    async captureRois(id, rois) {
+      if (rois.length < 2 || rois.length > 8) throw new Error('Invalid capture region');
+      for (const roi of rois) captureRectangle(roi, 1, 1);
+      if (!id) throw Object.assign(new Error('displayUnavailable'), { code: 'displayUnavailable' });
+      const reply = await helper.request('regions', id, undefined, rois);
+      const topo = topology(reply.header.displays);
+      const display = topo.displays.find(candidate => candidate.id === id);
+      if (!display) throw new Error('Selected display missing from capture response');
+      return splitRegions({ ...reply, meta: { display, topologyRevision: topo.revision, capturedAt: reply.header.capturedAt } }, rois.length);
+    },
     async captureEvidence(id, roi) {
       const sample = await capture('evidence', id, roi);
       return { capture: frame(sample), region: region(sample),

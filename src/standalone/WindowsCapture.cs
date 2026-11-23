@@ -120,6 +120,7 @@ namespace DeltaObservation
     {
         public string op, displayId;
         public Region roi;
+        public Region[] rois;
     }
 
     public static class CaptureService
@@ -182,11 +183,44 @@ namespace DeltaObservation
                 Reply(output, new { displays, jpegLength = 0, bgraLength = 0 }, Empty, Empty);
                 return;
             }
-            if (request.op != "frame" && request.op != "region" && request.op != "evidence")
+            if (request.op != "frame" && request.op != "region" && request.op != "evidence" && request.op != "regions")
                 throw new ArgumentException("Unknown capture operation");
             Display display = displays.FirstOrDefault(d => d.id == request.displayId);
             if (display == null) throw new InvalidOperationException("displayUnavailable");
             Bounds bounds = display.bounds;
+            if (request.op == "regions")
+            {
+                if (request.rois == null || request.rois.Length < 2 || request.rois.Length > 8) throw new ArgumentException("Invalid capture region");
+                Rectangle[] rects = new Rectangle[request.rois.Length];
+                byte[][] pixels = new byte[rects.Length][];
+                int total = 0;
+                string capturedAt = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+                for (int i = 0; i < rects.Length; i++)
+                {
+                    rects[i] = request.rois[i].Pixels(bounds.width, bounds.height);
+                    if (rects[i].Width < 1 || rects[i].Height < 1) throw new ArgumentException("Invalid capture region");
+                    using (Bitmap bitmap = new Bitmap(rects[i].Width, rects[i].Height, PixelFormat.Format32bppRgb))
+                    {
+                        using (Graphics graphics = Graphics.FromImage(bitmap))
+                            graphics.CopyFromScreen(bounds.x + rects[i].X, bounds.y + rects[i].Y, 0, 0, rects[i].Size, CopyPixelOperation.SourceCopy);
+                        pixels[i] = RawRegion(bitmap, new Rectangle(0, 0, rects[i].Width, rects[i].Height));
+                    }
+                    total = checked(total + pixels[i].Length);
+                }
+                if (Json.Serialize(displays) != Json.Serialize(Monitors.List())) throw new InvalidOperationException("displayChanged");
+                byte[] bgra = new byte[total];
+                object[] described = new object[rects.Length];
+                int offset = 0;
+                for (int i = 0; i < rects.Length; i++)
+                {
+                    Buffer.BlockCopy(pixels[i], 0, bgra, offset, pixels[i].Length);
+                    described[i] = new { width = rects[i].Width, height = rects[i].Height, length = pixels[i].Length };
+                    offset += pixels[i].Length;
+                }
+                Reply(output, new { displays, capturedAt, width = 0, height = 0, roiWidth = 0, roiHeight = 0,
+                    jpegLength = 0, bgraLength = bgra.Length, regions = described }, Empty, bgra);
+                return;
+            }
             Rectangle full = new Rectangle(0, 0, bounds.width, bounds.height);
             Rectangle region = request.op == "frame" ? Rectangle.Empty : request.roi.Pixels(bounds.width, bounds.height);
             Rectangle source = request.op == "region" ? region : full;

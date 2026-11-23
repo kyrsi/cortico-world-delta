@@ -11,6 +11,8 @@ export interface DeltaCapture { frame: CuaFrame; jpeg: Uint8Array }
 export interface DeltaFrameSource {
   capture(displayId: string): Promise<DeltaCapture>;
   captureRoi(displayId: string, roi: DeltaRoi): Promise<CapturedRegion>;
+  /** One display snapshot. Every returned region shares that display and topology. */
+  captureRois?(displayId: string, rois: readonly DeltaRoi[]): Promise<CapturedRegion[]>;
   captureEvidence(displayId: string, roi: DeltaRoi): Promise<CapturedEvidence>;
   close?(): Promise<void>;
 }
