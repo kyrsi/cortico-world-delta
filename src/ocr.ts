@@ -33,7 +33,6 @@ export function ocrProcessGone(error: unknown): boolean {
 
 const script = String.raw`
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 try {
   Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Threading; public static class DeltaOcrLifetime { private static Timer timer; public static void Watch(int id) { var owner = Process.GetProcessById(id); timer = new Timer(_ => { try { if (owner.HasExited) Environment.Exit(0); } catch { Environment.Exit(0); } }, null, 500, 500); } }'
@@ -49,15 +48,23 @@ try {
   if ($tag) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage((New-Object Windows.Globalization.Language($tag))) }
   $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation' + [char]96 + '1' } | Select-Object -First 1
   @{kind='ready'; availableLanguages=$available; language=$tag} | ConvertTo-Json -Compress
-  while ($null -ne ($line = [Console]::ReadLine())) {
+  $reader = New-Object System.IO.BinaryReader([Console]::OpenStandardInput())
+  $magic = [uint32]0x52434F44
+  $max = [uint64][Windows.Media.Ocr.OcrEngine]::MaxImageDimension
+  while ($true) {
+    try { $header = $reader.ReadBytes(16) } catch { exit 1 }
+    if ($header.Length -eq 0) { break }
+    if ($header.Length -ne 16) { exit 1 }
+    $width = [uint64]([BitConverter]::ToUInt32($header, 4))
+    $height = [uint64]([BitConverter]::ToUInt32($header, 8))
+    $length = [uint64]([BitConverter]::ToUInt32($header, 12))
+    if ([BitConverter]::ToUInt32($header, 0) -ne $magic -or $width -lt 1 -or $height -lt 1 -or $width -gt $max -or $height -gt $max -or $length -ne ($width * $height * [uint64]4) -or $length -gt [uint64][int]::MaxValue) { exit 1 }
+    try { $bytes = $reader.ReadBytes([int]$length) } catch { exit 1 }
+    if ($bytes.Length -ne $length) { exit 1 }
     $bitmap = $null
     try {
       if (!$engine) { throw 'The requested OCR language is unavailable' }
-      $request = $line | ConvertFrom-Json
-      if ($request.width -lt 1 -or $request.height -lt 1 -or $request.width -gt [Windows.Media.Ocr.OcrEngine]::MaxImageDimension -or $request.height -gt [Windows.Media.Ocr.OcrEngine]::MaxImageDimension) { throw 'Invalid OCR image dimensions' }
-      $bytes = [Convert]::FromBase64String($request.bgra)
-      if ($bytes.Length -ne $request.width * $request.height * 4) { throw 'Invalid OCR image buffer' }
-      $bitmap = New-Object Windows.Graphics.Imaging.SoftwareBitmap([Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,$request.width,$request.height,[Windows.Graphics.Imaging.BitmapAlphaMode]::Ignore)
+      $bitmap = New-Object Windows.Graphics.Imaging.SoftwareBitmap([Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,[int]$width,[int]$height,[Windows.Graphics.Imaging.BitmapAlphaMode]::Ignore)
       $bitmap.CopyFromBuffer([System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::AsBuffer($bytes))
       $task = $asTask.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke($null,@($engine.RecognizeAsync($bitmap)))
       $task.Wait()
@@ -156,7 +163,11 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
     } catch { fail(new Error('Invalid Windows OCR response')); }
   });
   child.stderr.on('data', () => {});
-  child.stdin.on('error', (error) => fail(error));
+  // A framing failure closes the pipe while the body is still being written.
+  child.stdin.on('error', (error) => {
+    const code = 'code' in error ? error.code : undefined;
+    if (code !== 'EOF' && code !== 'EPIPE') fail(error);
+  });
   child.on('error', (error) => fail(error));
   child.on('exit', () => { closed = true; markExited(); fail(new Error('Windows OCR exited')); });
   const close = async () => {
@@ -174,7 +185,16 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
       if (region.width * region.height > DELTA_MAX_ROI_PIXELS || region.bgra.byteLength !== region.width * region.height * 4) throw new Error('OCR region exceeds pixel limit');
       if (pending) throw new Error('Windows OCR already has a request');
       const result = response(3000);
-      child.stdin.write(`${JSON.stringify({ width: region.width, height: region.height, bgra: Buffer.from(region.bgra).toString('base64') })}\n`);
+      // uint32 magic 0x52434F44, width, height, byte length, then raw BGRA. A bad frame ends the helper.
+      const header = Buffer.allocUnsafe(16);
+      header.writeUInt32LE(0x52434F44, 0);
+      header.writeUInt32LE(region.width, 4);
+      header.writeUInt32LE(region.height, 8);
+      header.writeUInt32LE(region.bgra.byteLength, 12);
+      child.stdin.cork();
+      child.stdin.write(header);
+      child.stdin.write(region.bgra);
+      child.stdin.uncork();
       const value = await result;
       return parseLayout(value, region);
   };
