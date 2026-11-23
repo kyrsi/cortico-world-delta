@@ -23,7 +23,7 @@ import { startupCheck } from './startup-check.ts';
 import { windowsCalibrationHotkey } from './standalone-hotkey.ts';
 import { lootCalibrationFitsBudget, lootNamespace, lootStatus, validLootSignature } from './loot-detector.ts';
 import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaCapture, IdentityProgressSink } from './engine-ipc.ts';
-import { DEFAULT_GAME_ASPECT_RATIO, isGameAspectRatio, type DeltaCalibrationRegions, type DeltaGameAspectRatio } from './protocol.ts';
+import { DEFAULT_GAME_ASPECT_RATIO, DELTA_PROTOCOL_VERSION, isGameAspectRatio, type DeltaCalibrationRegions, type DeltaGameAspectRatio } from './protocol.ts';
 import type { DeltaBindingSnapshot, DeltaCalibrationApplyRequest, DeltaCalibrationHotkeyState, DeltaCalibrationSuggestion, DeltaDetectionState, DeltaDropReason, DeltaIntent, DeltaLootConfig, DeltaLootState, DeltaProductBinding, DeltaReason, DeltaSimulateRequest, DeltaSimulationReceipt, DeltaSpeechConfig, DeltaState } from './protocol.ts';
 
 interface Simulation { id: string; resolve(receipt: DeltaSimulationReceipt): void; timer: NodeJS.Timeout }
@@ -174,7 +174,7 @@ export class DeltaWorld implements World {
     await Promise.all(this.stopping);
   }
   bindProduct(binding?: DeltaProductBinding): void {
-    if (binding && binding.version !== 1) throw new Error(deltaText().errors.invalidBinding);
+    if (binding && binding.version !== DELTA_PROTOCOL_VERSION) throw new Error(deltaText().errors.invalidBinding);
     this.unsubscribe?.(); this.unsubscribe = null;
     this.releaseCalibrationHotkey();
     this.clearCalibration();

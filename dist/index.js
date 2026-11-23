@@ -2876,6 +2876,7 @@ function configGroupText(language2) {
 }
 
 // src/protocol.ts
+var DELTA_PROTOCOL_VERSION = 1;
 function sameDeltaDisplay(a, b) {
   return a.id === b.id && a.name === b.name && a.primary === b.primary && a.systemNumber === b.systemNumber && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
 }
@@ -4240,6 +4241,11 @@ async function invokePanel(host, panel, method, args) {
 import { fork } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { childExecArgv } from "cortico/extensions/runtime.ts";
+
+// src/engine-ipc.ts
+var DELTA_ENGINE_VERSION = 1;
+
+// src/proxy.ts
 function launchEngine(output) {
   return fork(fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./engine-child.ts" : "./engine-child.js", import.meta.url)), [], {
     execArgv: childExecArgv(),
@@ -4324,7 +4330,7 @@ var DeltaWorker = class {
       this.fail("worker-failed");
     });
     this.deadline(Math.max(1e4, this.options.heartbeatTimeoutMs));
-    this.send({ kind: "start", version: 1, generation: this.options.generation, settings: this.options.settings });
+    this.send({ kind: "start", version: DELTA_ENGINE_VERSION, generation: this.options.generation, settings: this.options.settings });
   }
   deadline(ms) {
     if (this.timer) clearTimeout(this.timer);
@@ -4647,7 +4653,7 @@ var DeltaWorld = class {
     await Promise.all(this.stopping);
   }
   bindProduct(binding) {
-    if (binding && binding.version !== 1) throw new Error(deltaText().errors.invalidBinding);
+    if (binding && binding.version !== DELTA_PROTOCOL_VERSION) throw new Error(deltaText().errors.invalidBinding);
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.releaseCalibrationHotkey();

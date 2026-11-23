@@ -39,11 +39,7 @@ export class SharedOcr {
       this.tail = request;
       return request;
     };
-    return { ...port, recognizeLayout, async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error('OCR layout exceeds result limits');
-      return layout.lines.map((line) => line.text);
-    }, close: () => {
+    return { ...port, recognizeLayout, close: () => {
       if (released) return release ?? Promise.resolve();
       released = true;
       if (this.port !== owned || --this.leases > 0) return Promise.resolve();

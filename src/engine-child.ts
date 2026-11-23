@@ -11,7 +11,7 @@ import { LootDetector, lootCaptureRoi, lootStatus } from './loot-detector.ts';
 import { SharedOcr } from './shared-ocr.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS } from './limits.ts';
 import { startupCheck } from './startup-check.ts';
-import type { CalibrationWorkerRequest, ChildToMain, DeltaFrameSource, MainToChild } from './engine-ipc.ts';
+import { DELTA_ENGINE_VERSION, type CalibrationWorkerRequest, type ChildToMain, type DeltaFrameSource, type MainToChild } from './engine-ipc.ts';
 
 let active = false;
 let generation = 0;
@@ -39,7 +39,7 @@ async function stop(): Promise<void> {
 }
 
 async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<void> {
-  if (active || message.version !== 1) return;
+  if (active || message.version !== DELTA_ENGINE_VERSION) return;
   generation = message.generation;
   const { settings } = message; displayId = settings.displayId;
   const module = await import(settings.frameSourceModule) as { createFrameSource(): DeltaFrameSource | Promise<DeltaFrameSource> };

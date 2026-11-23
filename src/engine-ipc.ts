@@ -45,7 +45,9 @@ export interface DeltaWorkerSettings {
   detection: DeltaDetectionConfig;
   loot?: DeltaLootConfig;
 }
-export type MainToChild = { kind: 'start'; version: 1; generation: number; settings: DeltaWorkerSettings }
+/** Value carried by a worker start message. */
+export const DELTA_ENGINE_VERSION = 1;
+export type MainToChild = { kind: 'start'; version: typeof DELTA_ENGINE_VERSION; generation: number; settings: DeltaWorkerSettings }
   | { kind: 'stop' }
   | { kind: 'preview'; requestId: number }
   | { kind: 'simulate'; requestId: number; eventId: string; eventKind: DeltaKind; dedupKey: string };

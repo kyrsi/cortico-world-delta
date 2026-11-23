@@ -2509,11 +2509,6 @@ async function createOcr(language) {
     language: typeof ready.language === "string" ? ready.language : null,
     exited,
     recognizeLayout,
-    async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error("Windows OCR layout exceeds result limits");
-      return layout.lines.map((line) => line.text);
-    },
     close
   };
 }
@@ -2997,9 +2992,10 @@ var Detector = class {
       while (this.pending && !this.closed) {
         const region = this.pending;
         this.pending = null;
-        if (Date.now() - this.lastScanAtMs < 500) {
+        const wait = 500 - (Date.now() - this.lastScanAtMs);
+        if (wait > 0) {
           this.pending = region;
-          await new Promise((done) => setTimeout(done, 50));
+          await this.waitBackoff(wait);
           continue;
         }
         const next = fingerprint(region);
@@ -3437,8 +3433,9 @@ var LootDetector = class {
   }
   async scan() {
     while (this.pending && !this.closed) {
-      if (Date.now() - this.lastScanAtMs < this.sampleIntervalMs) {
-        await new Promise((done) => setTimeout(done, 50));
+      const wait = this.sampleIntervalMs - (Date.now() - this.lastScanAtMs);
+      if (wait > 0) {
+        await this.waitBackoff(wait);
         continue;
       }
       const region = this.pending;
@@ -4644,11 +4641,7 @@ var SharedOcr = class {
       this.tail = request;
       return request;
     };
-    return { ...port, recognizeLayout, async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error("OCR layout exceeds result limits");
-      return layout.lines.map((line) => line.text);
-    }, close: () => {
+    return { ...port, recognizeLayout, close: () => {
       if (released) return release ?? Promise.resolve();
       released = true;
       if (this.port !== owned || --this.leases > 0) return Promise.resolve();
@@ -4723,6 +4716,9 @@ function startupCheck(frame, detection, loot) {
   };
 }
 
+// src/engine-ipc.ts
+var DELTA_ENGINE_VERSION = 1;
+
 // src/engine-child.ts
 var active = false;
 var generation = 0;
@@ -4757,7 +4753,7 @@ async function stop() {
   source = null;
 }
 async function start(message) {
-  if (active || message.version !== 1) return;
+  if (active || message.version !== DELTA_ENGINE_VERSION) return;
   generation = message.generation;
   const { settings } = message;
   displayId = settings.displayId;

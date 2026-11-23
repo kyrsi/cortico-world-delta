@@ -3,7 +3,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { childExecArgv } from 'cortico/extensions/runtime.ts';
 import type { Logger } from 'cortico/core/types.ts';
-import type { CalibrationWorkerRequest, CalibrationWorkerResult, ChildToMain, DeltaWorkerSettings, IdentityDebugProgress, IdentityProgressSink, MainToChild } from './engine-ipc.ts';
+import { DELTA_ENGINE_VERSION, type CalibrationWorkerRequest, type CalibrationWorkerResult, type ChildToMain, type DeltaWorkerSettings, type IdentityDebugProgress, type IdentityProgressSink, type MainToChild } from './engine-ipc.ts';
 import type { DeltaReason } from './protocol.ts';
 
 function launchEngine(output: 'pipe' | 'ignore'): ChildProcess {
@@ -73,7 +73,7 @@ export class DeltaWorker {
     child.once('exit', (code, signal) => { if (!this.closed) this.options.log.warn(`Capture process exited: code=${code}, signal=${signal}`); this.fail('worker-failed'); });
     // Loader startup is separate from ready-state heartbeat liveness.
     this.deadline(Math.max(10_000, this.options.heartbeatTimeoutMs));
-    this.send({ kind: 'start', version: 1, generation: this.options.generation, settings: this.options.settings });
+    this.send({ kind: 'start', version: DELTA_ENGINE_VERSION, generation: this.options.generation, settings: this.options.settings });
   }
   private deadline(ms: number): void {
     if (this.timer) clearTimeout(this.timer);

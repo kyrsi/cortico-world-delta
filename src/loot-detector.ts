@@ -249,7 +249,8 @@ export class LootDetector {
   }
   private async scan(): Promise<void> {
     while (this.pending && !this.closed) {
-      if (Date.now() - this.lastScanAtMs < this.sampleIntervalMs) { await new Promise((done) => setTimeout(done, 50)); continue; }
+      const wait = this.sampleIntervalMs - (Date.now() - this.lastScanAtMs);
+      if (wait > 0) { await this.waitBackoff(wait); continue; }
       const region = this.pending; this.pending = null; this.lastScanAtMs = Date.now();
       try {
         const candidates = detectLootItems(region, this.config.sensitivity), now = Date.now(), calibration = this.config.calibration!;

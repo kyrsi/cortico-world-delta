@@ -19,7 +19,6 @@ export interface DeltaOcrPort {
   language: string | null;
   /** Resolves when the OCR process has exited. */
   exited: Promise<void>;
-  recognize(region: CapturedRegion): Promise<readonly string[]>;
   recognizeLayout(region: CapturedRegion): Promise<DeltaOcrLayout>;
   close(): Promise<void>;
 }
@@ -195,10 +194,5 @@ export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPo
       return parseLayout(value, region);
   };
   return { pid: child.pid!, availableLanguages: Array.isArray(ready.availableLanguages) ? ready.availableLanguages.map(String) : [],
-    language: typeof ready.language === 'string' ? ready.language : null, exited, recognizeLayout,
-    async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error('Windows OCR layout exceeds result limits');
-      return layout.lines.map((line) => line.text);
-    }, close };
+    language: typeof ready.language === 'string' ? ready.language : null, exited, recognizeLayout, close };
 }

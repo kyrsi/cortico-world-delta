@@ -198,7 +198,8 @@ export class Detector {
       }
       while (this.pending && !this.closed) {
         const region = this.pending; this.pending = null;
-        if (Date.now() - this.lastScanAtMs < 500) { this.pending = region; await new Promise((done) => setTimeout(done, 50)); continue; }
+        const wait = 500 - (Date.now() - this.lastScanAtMs);
+        if (wait > 0) { this.pending = region; await this.waitBackoff(wait); continue; }
         const next = fingerprint(region);
         let difference = this.previous ? 0 : Infinity;
         if (this.previous) for (let i = 0; i < next.length; i++) difference += Math.abs(next[i]! - this.previous[i]!);
