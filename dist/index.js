@@ -3166,9 +3166,13 @@ var import_jpeg_js = __toESM(require_jpeg_js(), 1);
 
 // src/detector.ts
 function calibrationFitsBudget(calibration) {
-  const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
-  const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-  return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  try {
+    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
+    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
+    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  } catch {
+    return false;
+  }
 }
 function matchesCalibration(region, calibration) {
   return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
@@ -3315,12 +3319,8 @@ function projectedRegions(anchors) {
 }
 function calibrationRegions(source2, aspectRatio, combat, loot, anchors) {
   let savedCombat = null;
-  if (combat && sameCalibrationSource(source2, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio) {
-    try {
-      if (calibrationFitsBudget(combat)) savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
-    } catch {
-    }
-  }
+  if (combat && sameCalibrationSource(source2, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && calibrationFitsBudget(combat))
+    savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
   const savedLoot = loot && sameCalibrationSource(source2, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot) ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
   const native = supportsPreparation(source2) && (!anchors || containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions));
   const projection = native ? PRESET : anchors && projectedRegions(anchors);
@@ -3924,11 +3924,7 @@ var table = {
       roi,
       ...personalFeedbackRoi !== void 0 || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}
     };
-    try {
-      if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
-    } catch {
-      throw new Error(host.errors.invalidRequest);
-    }
+    if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
     host.persist({ detection: { calibration } });
     host.clearManualPreview();
     host.reconcile();
@@ -4162,13 +4158,7 @@ function calibrationState(frame, enabled, calibration, fitsBudget) {
   else if (a.x !== b.x || a.y !== b.y || current.rotation !== saved.rotation || current.name !== saved.name || current.systemNumber !== saved.systemNumber || current.primary !== saved.primary) reason = "geometry-changed";
   else if (frame.topologyRevision !== calibration.topologyRevision) reason = "topology-changed";
   else if (!matchesCalibration(frame, calibration)) reason = "geometry-changed";
-  if (!reason) {
-    try {
-      if (!fitsBudget()) reason = "roi-too-large";
-    } catch {
-      reason = "roi-too-large";
-    }
-  }
+  if (!reason && !fitsBudget()) reason = "roi-too-large";
   return { status: reason ? "invalid" : "compatible", reason };
 }
 function startupCheck(frame, detection, loot) {

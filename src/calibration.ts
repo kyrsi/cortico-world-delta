@@ -63,11 +63,8 @@ function projectedRegions(anchors: DeltaPreparationAnchors): DeltaCalibrationReg
 
 export function calibrationRegions(source: CalibrationSource, aspectRatio: DeltaGameAspectRatio, combat: DeltaCalibration | null, loot: DeltaLootCalibration | null, anchors?: DeltaPreparationAnchors) {
   let savedCombat: DeltaCalibrationRegions['combat'] | null = null;
-  if (combat && sameCalibrationSource(source, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio) {
-    try {
-      if (calibrationFitsBudget(combat)) savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
-    } catch { /* The persisted rectangles did not pass validation. */ }
-  }
+  if (combat && sameCalibrationSource(source, combat) && (combat.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && calibrationFitsBudget(combat))
+    savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
   const savedLoot = loot && sameCalibrationSource(source, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot)
     ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
   const native = supportsPreparation(source) && (!anchors || (containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions)));

@@ -124,10 +124,12 @@ export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string):
 }
 
 export function calibrationFitsBudget(calibration: DeltaCalibration): boolean {
-  const regions = [calibration.roi, ...(calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : [])];
-  const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-  return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA
-    && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  try {
+    const regions = [calibration.roi, ...(calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : [])];
+    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
+    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA
+      && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  } catch { return false; }
 }
 
 export function matchesCalibration(region: Pick<CapturedRegion, 'display' | 'topologyRevision'>, calibration: DeltaCalibration): boolean {

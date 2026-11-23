@@ -130,6 +130,7 @@ function parseLayout(value: Record<string, unknown>, region: CapturedRegion): De
 }
 
 export async function createOcr(language: DeltaGameLanguage): Promise<DeltaOcrPort> {
+  if (language !== 'zh-CN' && language !== 'en-US') throw new Error('Unsupported OCR language');
   if (process.platform !== 'win32') throw new Error(OCR_PLATFORM_UNAVAILABLE);
   const source = script.replace('__LANGUAGE__', language).replace('__PARENT_PID__', String(process.pid))
     .replaceAll('__MAX_LINES__', String(DELTA_OCR_LIMITS.maxLines)).replaceAll('__MAX_WORDS__', String(DELTA_OCR_LIMITS.maxWords))

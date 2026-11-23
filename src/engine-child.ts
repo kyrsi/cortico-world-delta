@@ -139,7 +139,8 @@ process.on('message', (message: MainToChild | CalibrationWorkerRequest) => {
   if (message.kind === 'start') void start(message).catch((err) => send({ kind: 'error', generation, reason: 'worker-failed', message: String(err) }));
   else if (message.kind === 'stop') void stop().finally(() => process.exit(0));
   else if (message.kind === 'simulate') simulate(message);
-  else if (message.kind === 'preview' && active) {
+  else if (message.kind === 'preview' && !active) send({ kind: 'preview', generation, requestId: message.requestId, capture: null });
+  else if (message.kind === 'preview') {
     void source!.capture(displayId).then((capture) => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture }); })
       .catch(() => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture: null }); });
   }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import jpeg from 'jpeg-js';
 import { DeltaWorld, DELTA_DEFAULTS } from '../src/index.ts';
 import { deltaText } from '../src/i18n/index.ts';
+import { createOcr } from '../src/ocr.ts';
 import { displays } from './fixtures/dual-display-source.mjs';
 
 const fixture = new URL('./fixtures/dual-display-source.mjs', import.meta.url).href;
@@ -126,4 +127,24 @@ test('a valid calibration persists only x, y, width and height', async (t) => {
   const fresh = await call('detectionPreview');
   await call('detectionCalibrate', fresh.frameId, rectangle, null);
   assert.equal(patches.at(-1).detection.calibration.personalFeedbackRoi, null);
+});
+
+test('state reports an invalid persisted detection region', () => {
+  const cfg = structuredClone(DELTA_DEFAULTS);
+  cfg.enabled = true;
+  cfg.detection.enabled = true;
+  cfg.detection.nickname = 'Pilot';
+  cfg.detection.language = 'zh-CN';
+  cfg.detection.calibration = { display: displays[1], topologyRevision: 'test', roi: { x: -0.2, y: 0.1, width: 0.2, height: 0.1 } };
+  const world = new DeltaWorld({ cfg, persist() {}, standalone: { frameSourceModule: fixture, async listDisplays() { return displays; } } });
+  const state = world.state();
+  assert.equal(state.detection.phase, 'uncalibrated');
+  assert.equal(state.detection.reason, 'roi-too-large');
+});
+
+test('createOcr rejects an unsupported language before spawning', async () => {
+  const started = Date.now();
+  await assert.rejects(createOcr('fr-FR'), { message: 'Unsupported OCR language' });
+  await assert.rejects(createOcr(''), { message: 'Unsupported OCR language' });
+  assert.ok(Date.now() - started < 1000);
 });

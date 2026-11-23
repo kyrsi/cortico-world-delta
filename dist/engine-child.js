@@ -2343,6 +2343,7 @@ function parseLayout(value, region) {
   return result;
 }
 async function createOcr(language) {
+  if (language !== "zh-CN" && language !== "en-US") throw new Error("Unsupported OCR language");
   if (process.platform !== "win32") throw new Error(OCR_PLATFORM_UNAVAILABLE);
   const source2 = script.replace("__LANGUAGE__", language).replace("__PARENT_PID__", String(process.pid)).replaceAll("__MAX_LINES__", String(DELTA_OCR_LIMITS.maxLines)).replaceAll("__MAX_WORDS__", String(DELTA_OCR_LIMITS.maxWords)).replaceAll("__MAX_LINE_CHARS__", String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll("__MAX_WORD_CHARS__", String(DELTA_OCR_LIMITS.maxWordChars));
   const command = Buffer.from(source2, "utf16le").toString("base64");
@@ -2796,9 +2797,13 @@ function parsePersonalFeedback(layout, nickname) {
   return [...matches.values()];
 }
 function calibrationFitsBudget(calibration) {
-  const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
-  const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-  return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  try {
+    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
+    const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
+    return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
+  } catch {
+    return false;
+  }
 }
 function matchesCalibration(region, calibration) {
   return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
@@ -4616,13 +4621,7 @@ function calibrationState(frame, enabled, calibration, fitsBudget) {
   else if (a.x !== b.x || a.y !== b.y || current.rotation !== saved.rotation || current.name !== saved.name || current.systemNumber !== saved.systemNumber || current.primary !== saved.primary) reason = "geometry-changed";
   else if (frame.topologyRevision !== calibration.topologyRevision) reason = "topology-changed";
   else if (!matchesCalibration(frame, calibration)) reason = "geometry-changed";
-  if (!reason) {
-    try {
-      if (!fitsBudget()) reason = "roi-too-large";
-    } catch {
-      reason = "roi-too-large";
-    }
-  }
+  if (!reason && !fitsBudget()) reason = "roi-too-large";
   return { status: reason ? "invalid" : "compatible", reason };
 }
 function startupCheck(frame, detection, loot) {
@@ -4854,7 +4853,8 @@ process.on("message", (message) => {
   if (message.kind === "start") void start(message).catch((err) => send({ kind: "error", generation, reason: "worker-failed", message: String(err) }));
   else if (message.kind === "stop") void stop().finally(() => process.exit(0));
   else if (message.kind === "simulate") simulate(message);
-  else if (message.kind === "preview" && active) {
+  else if (message.kind === "preview" && !active) send({ kind: "preview", generation, requestId: message.requestId, capture: null });
+  else if (message.kind === "preview") {
     void source.capture(displayId).then((capture) => {
       if (active) send({ kind: "preview", generation, requestId: message.requestId, capture });
     }).catch(() => {

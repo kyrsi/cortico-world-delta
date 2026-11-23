@@ -202,8 +202,7 @@ const table = {
     if (!preview) throw new Error(host.errors.invalidRequest);
     const calibration = { ...host.calibrationSource(preview), roi,
       ...(personalFeedbackRoi !== undefined || host.savedPersonalFeedback() ? { personalFeedbackRoi: personalFeedbackRoi ?? null } : {}) };
-    try { if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest); }
-    catch { throw new Error(host.errors.invalidRequest); }
+    if (!calibrationFitsBudget(calibration)) throw new Error(host.errors.invalidRequest);
     host.persist({ detection: { calibration } });
     host.clearManualPreview(); host.reconcile(); return host.state();
   } },
