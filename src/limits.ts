@@ -1,4 +1,4 @@
-/** IPC images and retained event metadata have fixed memory bounds. */
+/** IPC images, retained event metadata, and diagnostic files on disk have fixed bounds. */
 export const DELTA_MAX_JPEG_BYTES = 2 * 1024 * 1024;
 export const DELTA_MAX_HISTORY = 20;
 export const DELTA_CONTROL_INTERVAL_MS = 50;
@@ -15,3 +15,13 @@ export const DELTA_KNOWLEDGE_MAX_BYTES = 65_536;
 export const DELTA_KNOWLEDGE_MAX_CHARACTERS = 48_000;
 export const DELTA_KNOWLEDGE_MAX_SECTIONS = 64;
 export const DELTA_KNOWLEDGE_CONTEXT_MAX_CHARACTERS = 6000;
+/** Consecutive transient OCR failures before a detector reports an error. */
+export const DELTA_OCR_TRANSIENT_FAILURE_LIMIT = 3;
+/** Delay before the next OCR attempt. `failures` is the consecutive count, starting at 1. */
+export function deltaOcrBackoffMs(failures: number): number {
+  return Math.min(4_000, 1_000 * 2 ** Math.max(0, failures - 1));
+}
+export const DELTA_IDENTITY_DEBUG_MAX_FRAMES = 3;
+/** 1 MiB. `attempts.jsonl` rotates before an append would pass this size. */
+export const DELTA_IDENTITY_DEBUG_MAX_LOG_BYTES = 1_048_576;
+export const DELTA_REVEAL_MAX_SCREENSHOTS = 20;

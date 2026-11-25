@@ -3,28 +3,30 @@ import { createHash } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { captureRectangle } from './roi.ts';
-import { createOcr, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
+import { copyPixelRect } from './image.ts';
+import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
 import { matchesCalibration } from './detector.ts';
-import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_CONTEXT_PIXELS,
-  DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_REFERENCES, DELTA_MAX_LOOT_ROI_AREA, DELTA_MAX_ROI_PIXELS } from './limits.ts';
+import { lootCalibrationFitsBudget } from './budget.ts';
+import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_REFERENCES,
+  DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
+import { unionRect } from './rect.ts';
+import { compact, stripWhitespace, upperNFKC } from './text.ts';
 import type { DeltaDetectionConfig, DeltaLootCalibration, DeltaLootConfig, DeltaLootScene, DeltaLootSensitivity, DeltaLootState, DeltaRecognition, DeltaRoi } from './protocol.ts';
 
 export interface LootItemCandidate { box: DeltaOcrBox; signature: Uint8Array }
-export interface LootMatch { dedupKey: string; signature: Uint8Array; recognition: Extract<DeltaRecognition, { kind: 'loot-candidate' }> }
+export interface LootMatch extends LootItemCandidate { dedupKey: string; recognition: Extract<DeltaRecognition, { kind: 'loot-candidate' }> }
+/** Keep the slot's top-left label at native resolution. Very large slots retain their title and upper artwork. */
+export function lootDetailPixels(region: CapturedRegion, box: DeltaOcrBox): Pick<CapturedRegion, 'width' | 'height' | 'bgra'> {
+  const margin = Math.max(2, Math.round(box.height * 0.08));
+  const x = Math.max(0, box.x - margin), y = Math.max(0, box.y - margin);
+  const width = Math.min(640, region.width - x, box.x + box.width + margin - x);
+  const height = Math.min(400, region.height - y, box.y + box.height + margin - y);
+  return { width, height, bgra: copyPixelRect(region.bgra, region.width, x, y, width, height) };
+}
 export function lootCaptureRoi(calibration: DeltaLootCalibration): DeltaRoi {
-  const a = calibration.itemsRoi, b = calibration.contextRoi, x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+  return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
-export function lootCalibrationFitsBudget(calibration: DeltaLootCalibration): boolean {
-  try {
-    const { width, height } = calibration.display.bounds;
-    const items = captureRectangle(calibration.itemsRoi, width, height), context = captureRectangle(calibration.contextRoi, width, height);
-    const whole = captureRectangle(lootCaptureRoi(calibration), width, height);
-    return items.width * items.height <= DELTA_MAX_LOOT_ITEMS_PIXELS && context.width * context.height <= DELTA_MAX_LOOT_CONTEXT_PIXELS
-      && calibration.itemsRoi.width * calibration.itemsRoi.height + calibration.contextRoi.width * calibration.contextRoi.height <= DELTA_MAX_LOOT_ROI_AREA
-      && whole.width * whole.height <= DELTA_MAX_ROI_PIXELS;
-  } catch { return false; }
-}
+export { lootCalibrationFitsBudget };
 export function lootStatus(config: DeltaLootConfig, combat?: DeltaDetectionConfig): Omit<DeltaLootState, 'config'> {
   const reason = !config.language ? 'language-required' : !config.calibration ? 'calibration-required'
     : !lootCalibrationFitsBudget(config.calibration) ? 'roi-too-large'
@@ -34,14 +36,14 @@ export function lootStatus(config: DeltaLootConfig, combat?: DeltaDetectionConfi
 }
 export function parseLootContext(layout: DeltaOcrLayout): DeltaLootScene | null {
   if (layout.truncated) return null;
-  const text = layout.lines.map((line) => line.text).join(' ').normalize('NFKC').toUpperCase();
-  const compact = text.replace(/\s+/gu, ''), contains = (pattern: RegExp) => pattern.test(text) || pattern.test(compact);
+  const text = upperNFKC(layout.lines.map((line) => line.text).join(' '));
+  const folded = stripWhitespace(text), contains = (pattern: RegExp) => pattern.test(text) || pattern.test(folded);
   const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains).length;
   if (!classes) return null;
   if (contains(/容器|搜索物资|\bCONTAINER\b/u)) return 'container';
   if (contains(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return 'loot';
   const capacityHeading = layout.lines.some((line) => {
-    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(line.text.normalize('NFKC').replace(/\s+/gu, ''));
+    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(compact(line.text));
     return match && Number(match[2]) > 0 && Number(match[1]) <= Number(match[2]);
   });
   if (capacityHeading) return 'inventory';
@@ -202,20 +204,14 @@ export function lootNamespace(region: Pick<CapturedRegion, 'display' | 'topology
 function evidenceRegions(evidence: CapturedEvidence, calibration: DeltaLootCalibration): { items: CapturedEvidence; context: CapturedRegion } {
   const { width, height } = calibration.display.bounds, union = captureRectangle(lootCaptureRoi(calibration), width, height);
   const extract = (roi: DeltaRoi): CapturedRegion => {
-    const box = captureRectangle(roi, width, height), data = new Uint8Array(box.width * box.height * 4);
+    const box = captureRectangle(roi, width, height);
     if (evidence.region.width !== union.width || evidence.region.height !== union.height) throw new Error('Invalid native item evidence dimensions');
-    for (let y = 0; y < box.height; y++) {
-      const start = ((box.y - union.y + y) * union.width + box.x - union.x) * 4;
-      data.set(evidence.region.bgra.subarray(start, start + box.width * 4), y * box.width * 4);
-    }
+    const data = copyPixelRect(evidence.region.bgra, union.width, box.x - union.x, box.y - union.y, box.width, box.height);
     return { ...evidence.region, width: box.width, height: box.height, bgra: data };
   };
   const decoded = jpeg.decode(evidence.capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height), rgba = new Uint8Array(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * decoded.width + crop.x) * 4;
-    rgba.set(decoded.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height);
+  const rgba = copyPixelRect(decoded.data, decoded.width, crop.x, crop.y, crop.width, crop.height);
   return { items: { capture: evidence.capture, region: extract(calibration.itemsRoi), crop,
     cropJpeg: jpeg.encode({ data: rgba, width: crop.width, height: crop.height }, 90).data }, context: extract(calibration.contextRoi) };
 }
@@ -230,23 +226,41 @@ export class LootDetector {
   private tracker = new LootItemTracker();
   private ocr: DeltaOcrPort | null = null;
   private lastScanAtMs = 0;
+  private failures = 0;
+  private backoffCancel: (() => void) | null = null;
   constructor(private readonly config: DeltaLootConfig, private readonly evidence: () => Promise<CapturedEvidence>,
     private readonly candidate: (evidence: CapturedEvidence, match: LootMatch) => void, private readonly openOcr: typeof createOcr = createOcr,
-    combat?: DeltaDetectionConfig) { this.status = lootStatus(config, combat); }
+    combat?: DeltaDetectionConfig, private readonly backoffMs: (failures: number) => number = deltaOcrBackoffMs,
+    private readonly sampleIntervalMs = DELTA_LOOT_SAMPLE_INTERVAL_MS) { this.status = lootStatus(config, combat); }
   submit(region: CapturedRegion): void {
     if (this.closed || !this.config.enabled || !this.config.calibration || this.status.phase === 'unavailable' || this.status.phase === 'error' || this.status.reason) return;
     if (!matchesCalibration(region, { ...this.config.calibration, roi: this.config.calibration.itemsRoi })) {
-      this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.clearVisible(); void this.ocr?.close(); return;
+      this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.clearVisible(); this.backoffCancel?.(); void this.ocr?.close(); return;
     }
     this.pending = region;
     if (!this.running) this.running = this.drain().finally(() => { this.running = null; });
   }
   clearVisible(): void { this.visible = []; this.previous = []; this.pending = null; this.status.scene = null; }
   private async drain(): Promise<void> {
-    try {
-      while (this.pending && !this.closed) {
-        if (Date.now() - this.lastScanAtMs < DELTA_LOOT_SAMPLE_INTERVAL_MS) { await new Promise((done) => setTimeout(done, 50)); continue; }
-        const region = this.pending; this.pending = null; this.lastScanAtMs = Date.now();
+    while (!this.recognitionStopped() && this.status.phase !== 'error' && this.status.phase !== 'unavailable') {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = 'unavailable'; this.status.reason = 'ocr-unavailable'; this.status.lastError = String(error); this.clearVisible(); return;
+        }
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  private async scan(): Promise<void> {
+    while (this.pending && !this.closed) {
+      const wait = this.sampleIntervalMs - (Date.now() - this.lastScanAtMs);
+      if (wait > 0) { await this.waitBackoff(wait); continue; }
+      const region = this.pending; this.pending = null; this.lastScanAtMs = Date.now();
+      try {
         const candidates = detectLootItems(region, this.config.sensitivity), now = Date.now(), calibration = this.config.calibration!;
         const namespace = lootNamespace(region, calibration);
         this.visible = candidates.map((item) => item.signature); this.tracker.observe(namespace, this.visible, now);
@@ -268,6 +282,7 @@ export class LootDetector {
         this.status.engine = 'windows-ocr'; this.status.availableLanguages = this.ocr.availableLanguages;
         if (!this.ocr.language) { this.status.phase = 'unavailable'; this.status.reason = 'ocr-language-unavailable'; await this.ocr.close(); return; }
         const layout = await this.ocr.recognizeLayout(parts.context);
+        this.failures = 0; this.status.lastError = null;
         if (this.recognitionStopped()) { await this.ocr.close(); return; }
         const scene = parseLootContext(layout); this.status.scene = scene;
         if (!scene) continue;
@@ -276,15 +291,32 @@ export class LootDetector {
           if (this.tracker.has(namespace, match.signature, Date.now())) continue;
           const dedupKey = this.tracker.identify(namespace, match.signature, Date.now());
           this.tracker.remember(namespace, match.signature, dedupKey, Date.now()); this.status.candidates++;
-          this.candidate(parts.items, { dedupKey, signature: match.signature,
+          this.candidate(parts.items, { dedupKey, box: match.box, signature: match.signature,
             recognition: { kind: 'loot-candidate', text, target: '', scene, basis: 'red-grid-ui', quality: 'unconfirmed', itemName: null } });
         }
+      } catch (error) {
+        if (!this.pending) this.pending = region;
+        throw error;
       }
-    } catch (error) {
-      if (!this.recognitionStopped()) { this.status.phase = this.ocr ? 'error' : 'unavailable'; this.status.reason = this.ocr ? null : 'ocr-unavailable'; this.status.lastError = String(error); this.clearVisible(); }
-      await this.ocr?.close();
     }
   }
+  private async noteTransient(error: unknown): Promise<boolean> {
+    const port = this.ocr; this.ocr = null; this.failures++; this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) { this.status.phase = 'starting'; this.status.reason = null; }
+    else { this.status.phase = 'error'; this.status.reason = null; this.clearVisible(); }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  private waitBackoff(ms: number): Promise<void> {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.backoffCancel = null; resolve(); }, ms);
+      this.backoffCancel = () => { clearTimeout(timer); this.backoffCancel = null; resolve(); };
+    });
+  }
   private recognitionStopped(): boolean { return this.closed || this.status.reason === 'source-changed'; }
-  async close(): Promise<void> { this.closed = true; this.clearVisible(); await this.ocr?.close(); await this.running; }
+  async close(): Promise<void> { this.closed = true; this.clearVisible(); this.backoffCancel?.(); await this.ocr?.close(); await this.running; }
 }

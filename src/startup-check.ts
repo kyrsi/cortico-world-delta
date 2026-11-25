@@ -18,10 +18,7 @@ function calibrationState(frame: CuaFrame | null, enabled: boolean, calibration:
     || current.systemNumber !== saved.systemNumber || current.primary !== saved.primary) reason = 'geometry-changed';
   else if (frame.topologyRevision !== calibration.topologyRevision) reason = 'topology-changed';
   else if (!matchesCalibration(frame, calibration)) reason = 'geometry-changed';
-  if (!reason) {
-    try { if (!fitsBudget()) reason = 'roi-too-large'; }
-    catch { reason = 'roi-too-large'; }
-  }
+  if (!reason && !fitsBudget()) reason = 'roi-too-large';
   return { status: reason ? 'invalid' : 'compatible', reason };
 }
 

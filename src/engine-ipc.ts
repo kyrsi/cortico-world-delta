@@ -3,27 +3,39 @@ import type { CuaFrame } from 'cortico-world-desktop-pet';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import type { CalibrationSource } from './calibration.ts';
 import type { DeltaGameAspectRatio, DeltaGameLanguage, DeltaPreparationAnchors, DeltaCalibrationRegions } from './protocol.ts';
-import type { DeltaAttribution, DeltaCalibrationDiagnostic, DeltaDetectionConfig, DeltaDetectionState, DeltaKind, DeltaLootConfig, DeltaLootState, DeltaRoi, DeltaRecognition } from './protocol.ts';
+import type { DeltaAttribution, DeltaCalibrationDiagnostic, DeltaDetectionConfig, DeltaDetectionState, DeltaIdentitySuggestion, DeltaKind, DeltaLootConfig, DeltaLootState, DeltaRoi, DeltaRecognition } from './protocol.ts';
 import type { PersonalSignature } from './personal-notification.ts';
+import type { ProfileDebugEvent } from './profile-debug-trace.ts';
 
 export interface DeltaCapture { frame: CuaFrame; jpeg: Uint8Array }
 export interface DeltaFrameSource {
   capture(displayId: string): Promise<DeltaCapture>;
   captureRoi(displayId: string, roi: DeltaRoi): Promise<CapturedRegion>;
+  /** One display snapshot. Every returned region shares that display and topology. */
+  captureRois?(displayId: string, rois: readonly DeltaRoi[]): Promise<CapturedRegion[]>;
   captureEvidence(displayId: string, roi: DeltaRoi): Promise<CapturedEvidence>;
   close?(): Promise<void>;
 }
 export interface CalibrationWorkerRequest {
-  kind: 'calibration-suggest' | 'calibration-source';
+  kind: 'calibration-suggest' | 'calibration-source' | 'calibration-preview' | 'identity-suggest';
   frameSourceModule: string;
   displayId: string;
   gameAspectRatio?: DeltaGameAspectRatio;
   language?: DeltaGameLanguage;
+  identityDebug?: boolean;
 }
+export type IdentityDebugProgress = { kind: 'frame'; capturedAt: string; width: number; height: number;
+  displayId: string; systemNumber: number | null; png: Uint8Array }
+  | { kind: 'trace'; event: ProfileDebugEvent
+    | { stage: 'display'; displayId: string; systemNumber: number | null; width: number; height: number; scaleFactor: number | null }
+    | { stage: 'ocr-open'; language: string | null; availableLanguages: string[] }
+    | { stage: 'error'; operation: string; reason: string; errorType?: string; locations?: string[] } };
+export type IdentityProgressSink = (progress: IdentityDebugProgress) => void;
 export type CalibrationWorkerResult = { status: 'ready'; capture: DeltaCapture; anchors?: DeltaPreparationAnchors }
+  | { status: 'manual-preview'; capture: DeltaCapture }
   | { status: 'inventory-ready'; capture: DeltaCapture; loot: DeltaCalibrationRegions['loot'] }
   | { status: 'source'; source: CalibrationSource } | { status: DeltaCalibrationDiagnostic; capture?: DeltaCapture }
-  | { status: 'capture-unavailable' };
+  | { status: 'identity'; suggestion: DeltaIdentitySuggestion; reason?: string } | { status: 'capture-unavailable'; reason?: string };
 
 export interface DeltaWorkerSettings {
   displayId: string;
@@ -33,7 +45,9 @@ export interface DeltaWorkerSettings {
   detection: DeltaDetectionConfig;
   loot?: DeltaLootConfig;
 }
-export type MainToChild = { kind: 'start'; version: 1; generation: number; settings: DeltaWorkerSettings }
+/** Value carried by a worker start message. */
+export const DELTA_ENGINE_VERSION = 1;
+export type MainToChild = { kind: 'start'; version: typeof DELTA_ENGINE_VERSION; generation: number; settings: DeltaWorkerSettings }
   | { kind: 'stop' }
   | { kind: 'preview'; requestId: number }
   | { kind: 'simulate'; requestId: number; eventId: string; eventKind: DeltaKind; dedupKey: string };
@@ -45,6 +59,7 @@ export type ChildToMain = { kind: 'ready'; generation: number }
       attribution?: DeltaAttribution | null;
       personalSignature?: PersonalSignature | null;
       lootSignature?: Uint8Array;
+      lootDetail?: Pick<CapturedRegion, 'width' | 'height' | 'bgra'>;
       /** crop uses full JPEG pixel coordinates. */
       capture: DeltaCapture; crop: { x: number; y: number; width: number; height: number }; cropJpeg: Uint8Array }
   | { kind: 'error'; generation: number; reason: 'source-unavailable' | 'worker-failed'; message: string };

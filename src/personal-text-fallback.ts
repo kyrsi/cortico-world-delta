@@ -2,6 +2,7 @@
 import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import type { DeltaOcrBox, DeltaOcrLayout } from './ocr.ts';
 import { DELTA_MAX_ROI_PIXELS } from './limits.ts';
+import { bgraGray } from './pixels.ts';
 
 export const PERSONAL_TEXT_FALLBACK_LIMITS = {
   maxVariants: 3, maxVariantPixels: DELTA_MAX_ROI_PIXELS,
@@ -28,7 +29,7 @@ export function personalTextRaster(source: CapturedRegion, kind: PersonalTextFal
   const mask = new Uint8Array(paddedWidth * paddedHeight).fill(255);
   const gray = kind === 'white-gold-edge' ? new Uint8Array(sourceWidth * sourceHeight) : null;
   if (gray) for (let at = 0, pixel = 0; pixel < gray.length; pixel++, at += 4) {
-    gray[pixel] = (source.bgra[at]! * 3735 + source.bgra[at + 1]! * 19235 + source.bgra[at + 2]! * 9798 + 16384) >> 15;
+    gray[pixel] = bgraGray(source.bgra[at]!, source.bgra[at + 1]!, source.bgra[at + 2]!);
   }
   for (let y = 0; y < height; y++) for (let x = 0; x < sourceWidth; x++) {
     const at = ((y + offsetY) * sourceWidth + x) * 4;

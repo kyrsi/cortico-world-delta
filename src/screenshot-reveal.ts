@@ -1,12 +1,17 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { DeltaCapture } from './engine-ipc.ts';
+import { DELTA_REVEAL_MAX_SCREENSHOTS } from './limits.ts';
+import { retainNewestFiles } from './retain-files.ts';
+
+const revealName = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-(?:preview|full|crop)-[\da-f]{64}\.jpg$/;
 
 export interface ScreenshotReveal {
   directory: string;
   open(filePath: string): Promise<void> | void;
+  maxFiles?: number;
 }
 
 export function openScreenshotInFolder(filePath: string): Promise<void> {
@@ -44,5 +49,6 @@ export async function revealCapture(options: ScreenshotReveal, capture: DeltaCap
       throw error;
     }
   }
+  retainNewestFiles(directory, revealName, basename(filePath), options.maxFiles ?? DELTA_REVEAL_MAX_SCREENSHOTS);
   await options.open(filePath);
 }

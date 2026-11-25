@@ -1,9 +1,12 @@
 import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { PREPARATION_ROIS, SOLO_PREPARATION_MODE_ROI } from './calibration.ts';
 import { measureSafeBox } from './calibration-anchors-grid.ts';
+import { calibrationViewports, project } from './calibration-viewport.ts';
 import type { DeltaOcrBox as Box, DeltaOcrLine, DeltaOcrPort } from './ocr.ts';
 import { doubleOcrRaster } from './personal-text-fallback.ts';
+import { bgraGray, uiGreen } from './pixels.ts';
 import type { DeltaCalibrationRegions, DeltaRoi } from './protocol.ts';
+import { unionRect } from './rect.ts';
 
 export type CalibrationAnchors =
   | { scene: 'preparation'; start: DeltaRoi; actions: DeltaRoi }
@@ -18,10 +21,6 @@ const labels = {
 type Label = keyof typeof labels;
 type Anchor = { label: Label; box: Box };
 const labelPatterns = Object.entries(labels) as [Label, RegExp][];
-const extent = (a: Box, b: Box): Box => {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-};
 
 function lineAnchors(line: DeltaOcrLine): Anchor[] {
   const result: Anchor[] = [];
@@ -31,7 +30,7 @@ function lineAnchors(line: DeltaOcrLine): Anchor[] {
       const word = line.words[last]!;
       text += word.text.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
       if (text.length > 16) break;
-      box = extent(box, word.box);
+      box = unionRect(box, word.box);
       const label = labelPatterns.find(([name, pattern]) => pattern.test(name === 'safe' ? text.replace(/[:;：；]+$/u, '') : text))?.[0];
       if (!label) continue;
       // Windows can merge adjacent controls into one line. Require an independent label within that line.
@@ -46,52 +45,14 @@ function lineAnchors(line: DeltaOcrLine): Anchor[] {
   return result;
 }
 
-function project(area: Box, roi: DeltaRoi): Box {
-  const x = Math.floor(roi.x * area.width), y = Math.floor(roi.y * area.height);
-  return { x: area.x + x, y: area.y + y, width: Math.ceil((roi.x + roi.width) * area.width) - x,
-    height: Math.ceil((roi.y + roi.height) * area.height) - y };
-}
-
-function hintedViewport(frame: CapturedRegion, hint: string): Box {
-  const [w, h] = hint.split(':').map(Number);
-  const ratio = w && h && w > 0 && h > 0 ? w / h : 16 / 10;
-  const width = Math.max(1, Math.min(frame.width, Math.round(frame.height * ratio)));
-  const height = Math.max(1, Math.min(frame.height, Math.round(frame.width / ratio)));
-  return { x: Math.floor((frame.width - width) / 2), y: Math.floor((frame.height - height) / 2), width, height };
-}
-
-function letterboxedViewport(frame: CapturedRegion): Box {
-  const { width, height } = frame;
-  function border(horizontal: boolean, reverse: boolean) {
-    const across = horizontal ? width : height, extent = horizontal ? height : width;
-    for (let offset = 0; offset < extent * .32; offset++) {
-      const coordinate = reverse ? extent - 1 - offset : offset;
-      let dark = 0;
-      for (let n = 0; n < 48; n++) {
-        const cross = Math.floor((n + .5) * across / 48);
-        const at = (horizontal ? coordinate * width + cross : cross * width + coordinate) * 4;
-        if (Math.max(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!) <= 8) dark++;
-      }
-      if (dark < 47) return offset;
-    }
-    return 0;
-  }
-  const pair = (horizontal: boolean) => {
-    const near = border(horizontal, false), far = border(horizontal, true);
-    return Math.min(near, far) >= 4 && Math.abs(near - far) <= Math.max(3, near * .04) ? [near, far] as const : [0, 0] as const;
-  };
-  const [x, right] = pair(false), [y, bottom] = pair(true);
-  return { x, y, width: width - x - right, height: height - y - bottom };
-}
-
-function scanRaster(frame: CapturedRegion, box: Box, enlargeText: boolean, maxScale: number) {
+export function scanRaster(frame: CapturedRegion, box: Box, enlargeText: boolean, maxScale: number) {
   const budget = 1_750_000;
   if (enlargeText && 4 * box.width * box.height <= budget && Math.max(box.width, box.height) <= 1150) {
     const gray = new Uint8Array(box.width * box.height);
     for (let y = 0, i = 0; y < box.height; y++) {
       let at = ((box.y + y) * frame.width + box.x) * 4;
       for (let x = 0; x < box.width; x++, i++, at += 4) {
-        gray[i] = (frame.bgra[at]! * 3735 + frame.bgra[at + 1]! * 19235 + frame.bgra[at + 2]! * 9798 + 16384) >> 15;
+        gray[i] = bgraGray(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!);
       }
     }
     return doubleOcrRaster(gray, box.width, box.height);
@@ -127,8 +88,8 @@ function matchingBanner(frame: CapturedRegion, start: Box, action: Box) {
     let green = 0;
     for (let column = 0; column < count; column++) {
       const x = start.x + Math.floor((column + .5) * span / count);
-      const at = (frame.width * y + x) * 4, g = frame.bgra[at + 1]!;
-      if (g >= 105 && g - frame.bgra[at + 2]! >= 48 && g - frame.bgra[at]! >= 24) green++;
+      const at = (frame.width * y + x) * 4;
+      if (uiGreen(frame.bgra[at]!, frame.bgra[at + 1]!, frame.bgra[at + 2]!)) green++;
     }
     rows = green >= 21 ? rows + 1 : 0;
     if (rows >= Math.max(3, start.height / 4)) return true;
@@ -146,7 +107,7 @@ function preparation(frame: CapturedRegion, anchors: Anchor[]): CalibrationAncho
     for (const button of [...boxes('squad'), ...(hasMode ? boxes('deploy') : [])]) {
       const gap = button.x - gear.x - gear.width;
       if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) &&
-        Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(extent(gear, button));
+        Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(unionRect(gear, button));
     }
   }
   for (const start of boxes('start')) for (const action of actions) {
@@ -209,8 +170,8 @@ function preparationFocus(frame: CapturedRegion, anchors: Anchor[]): Box[] {
 
 /** Ratio selects the first search windows. Returned rectangles are measured in the complete captured frame. */
 export async function detectCalibrationAnchors(frame: CapturedRegion, aspectRatio: string, ocr: Pick<DeltaOcrPort, 'recognizeLayout'>): Promise<CalibrationAnchors | null> {
-  const whole: Box = { x: 0, y: 0, width: frame.width, height: frame.height };
-  const hinted = hintedViewport(frame, aspectRatio);
+  const areas = calibrationViewports(frame, aspectRatio);
+  const whole = areas[2];
   const scanned = new Set<string>(), anchors: Anchor[] = [];
   const measured = new Map<string, ReturnType<typeof measureSafeBox>>();
   async function scan(box: Box, enlarge = false, maxScale = 2.4) {
@@ -242,8 +203,6 @@ export async function detectCalibrationAnchors(frame: CapturedRegion, aspectRati
     }
     return chosen && { scene: 'inventory', loot: { contextRoi: relative(chosen.title, frame), itemsRoi: relative(chosen.items, frame) } };
   }
-  // The native screen can be stretched or letterboxed independently of the game's selected aspect ratio.
-  const areas = [hinted, letterboxedViewport(frame), whole];
   for (const area of areas) {
     await scan(project(area, { x: .24, y: .49, width: .42, height: .43 }));
     const loot = inventory();

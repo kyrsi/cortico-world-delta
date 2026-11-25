@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import './build-loot-review.mjs';
 
 const options = {
   absWorkingDir: fileURLToPath(new URL('../', import.meta.url)),
@@ -19,7 +20,11 @@ await build({
 
 await build({
   ...options,
-  entryPoints: { index: 'src/index.ts', 'engine-child': 'src/engine-child.ts' },
+  entryPoints: {
+    index: 'src/index.ts',
+    'engine-child': 'src/engine-child.ts',
+    'standalone-capture': 'src/standalone-capture.ts',
+  },
   platform: 'node',
   target: 'node22',
   external: ['cortico/*'],

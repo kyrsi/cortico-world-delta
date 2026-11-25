@@ -2183,28 +2183,14 @@ var require_jpeg_js = __commonJS({
 var import_jpeg_js3 = __toESM(require_jpeg_js(), 1);
 import { randomUUID } from "node:crypto";
 
-// src/calibration.ts
-import { isDeepStrictEqual } from "node:util";
-
 // src/detector.ts
 import { createHash } from "node:crypto";
 
-// src/roi.ts
-function captureRectangle(roi, width, height) {
-  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) throw new Error("Invalid capture region");
-  const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
-  return {
-    x,
-    y,
-    width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
-    height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
-  };
+// src/protocol.ts
+function sameDeltaDisplay(a, b) {
+  return a.id === b.id && a.name === b.name && a.primary === b.primary && a.systemNumber === b.systemNumber && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && a.bounds.x === b.bounds.x && a.bounds.y === b.bounds.y && a.bounds.width === b.bounds.width && a.bounds.height === b.bounds.height;
 }
-
-// src/ocr.ts
-import { spawn } from "node:child_process";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
+var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 
 // src/limits.ts
 var DELTA_MAX_JPEG_BYTES = 2 * 1024 * 1024;
@@ -2217,12 +2203,108 @@ var DELTA_LOOT_SAMPLE_INTERVAL_MS = 2e3;
 var DELTA_MAX_LOOT_CANDIDATES = 4;
 var DELTA_MAX_LOOT_REFERENCES = 32;
 var DELTA_LOOT_RETAIN_MS = 6e4;
+var DELTA_OCR_TRANSIENT_FAILURE_LIMIT = 3;
+function deltaOcrBackoffMs(failures) {
+  return Math.min(4e3, 1e3 * 2 ** Math.max(0, failures - 1));
+}
+
+// src/rect.ts
+function unionRect(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+}
+function unionRects(boxes) {
+  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
+  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
+}
+
+// src/roi.ts
+function captureRoi(value) {
+  if (!value || typeof value !== "object") return null;
+  const roi = value;
+  if (![roi.x, roi.y, roi.width, roi.height].every(Number.isFinite) || roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0 || roi.x + roi.width > 1 || roi.y + roi.height > 1) return null;
+  return { x: roi.x, y: roi.y, width: roi.width, height: roi.height };
+}
+function outwardRectangle(roi, width, height) {
+  const x = Math.floor(roi.x * width), y = Math.floor(roi.y * height);
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(width - x, Math.ceil((roi.x + roi.width) * width) - x)),
+    height: Math.max(1, Math.min(height - y, Math.ceil((roi.y + roi.height) * height) - y))
+  };
+}
+function captureRectangle(roi, width, height) {
+  if (!captureRoi(roi)) throw new Error("Invalid capture region");
+  return outwardRectangle(roi, width, height);
+}
+
+// src/budget.ts
+function acceptedRoi(roi) {
+  return captureRoi(roi) !== null;
+}
+function combatSelectionTooLarge(regions, width, height) {
+  const area = regions.reduce((total, roi) => total + roi.width * roi.height, 0);
+  const pixels = regions.reduce((total, roi) => {
+    const box = outwardRectangle(roi, width, height);
+    return total + box.width * box.height;
+  }, 0);
+  return area > DELTA_MAX_ROI_AREA || pixels > DELTA_MAX_ROI_PIXELS;
+}
+function calibrationFitsBudget(calibration) {
+  try {
+    const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
+    const { width, height } = calibration.display.bounds;
+    for (const roi of regions) captureRectangle(roi, width, height);
+    return !combatSelectionTooLarge(regions, width, height);
+  } catch {
+    return false;
+  }
+}
+function lootSelectionTooLarge(items, context, width, height, valid) {
+  const pixels = (roi) => {
+    if (!valid(roi)) return 0;
+    const box = outwardRectangle(roi, width, height);
+    return box.width * box.height;
+  };
+  const regions = [items, context].filter(valid);
+  const area = regions.reduce((sum, roi) => sum + roi.width * roi.height, 0);
+  const bounds = regions.length === 0 ? null : regions.length === 1 ? regions[0] : unionRect(regions[0], regions[1]);
+  return pixels(items) > DELTA_MAX_LOOT_ITEMS_PIXELS || pixels(context) > DELTA_MAX_LOOT_CONTEXT_PIXELS || area > DELTA_MAX_LOOT_ROI_AREA || pixels(bounds) > DELTA_MAX_ROI_PIXELS;
+}
+function lootCalibrationFitsBudget(calibration) {
+  try {
+    const { width, height } = calibration.display.bounds;
+    captureRectangle(calibration.itemsRoi, width, height);
+    captureRectangle(calibration.contextRoi, width, height);
+    captureRectangle(unionRect(calibration.itemsRoi, calibration.contextRoi), width, height);
+    return !lootSelectionTooLarge(calibration.itemsRoi, calibration.contextRoi, width, height, acceptedRoi);
+  } catch {
+    return false;
+  }
+}
+
+// src/ocr.ts
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+
+// src/powershell.ts
+import { join } from "node:path";
+function powershellExecutable() {
+  return join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
 
 // src/ocr.ts
 var DELTA_OCR_LIMITS = { maxLines: 64, maxWords: 512, maxLineChars: 1024, maxWordChars: 128 };
+var OCR_PLATFORM_UNAVAILABLE = "Windows OCR is unavailable on this platform";
+function ocrUnavailableOnPlatform(error) {
+  return error instanceof Error && error.message === OCR_PLATFORM_UNAVAILABLE;
+}
+function ocrProcessGone(error) {
+  return error instanceof Error && (error.message === "Windows OCR timed out" || error.message === "Windows OCR exited" || error.message === "Windows OCR is closed" || error.message === "Windows OCR stopped");
+}
 var script = String.raw`
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 try {
   Add-Type -TypeDefinition 'using System; using System.Diagnostics; using System.Threading; public static class DeltaOcrLifetime { private static Timer timer; public static void Watch(int id) { var owner = Process.GetProcessById(id); timer = new Timer(_ => { try { if (owner.HasExited) Environment.Exit(0); } catch { Environment.Exit(0); } }, null, 500, 500); } }'
@@ -2238,15 +2320,23 @@ try {
   if ($tag) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage((New-Object Windows.Globalization.Language($tag))) }
   $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation' + [char]96 + '1' } | Select-Object -First 1
   @{kind='ready'; availableLanguages=$available; language=$tag} | ConvertTo-Json -Compress
-  while ($null -ne ($line = [Console]::ReadLine())) {
+  $reader = New-Object System.IO.BinaryReader([Console]::OpenStandardInput())
+  $magic = [uint32]0x52434F44
+  $max = [uint64][Windows.Media.Ocr.OcrEngine]::MaxImageDimension
+  while ($true) {
+    try { $header = $reader.ReadBytes(16) } catch { exit 1 }
+    if ($header.Length -eq 0) { break }
+    if ($header.Length -ne 16) { exit 1 }
+    $width = [uint64]([BitConverter]::ToUInt32($header, 4))
+    $height = [uint64]([BitConverter]::ToUInt32($header, 8))
+    $length = [uint64]([BitConverter]::ToUInt32($header, 12))
+    if ([BitConverter]::ToUInt32($header, 0) -ne $magic -or $width -lt 1 -or $height -lt 1 -or $width -gt $max -or $height -gt $max -or $length -ne ($width * $height * [uint64]4) -or $length -gt [uint64][int]::MaxValue) { exit 1 }
+    try { $bytes = $reader.ReadBytes([int]$length) } catch { exit 1 }
+    if ($bytes.Length -ne $length) { exit 1 }
     $bitmap = $null
     try {
       if (!$engine) { throw 'The requested OCR language is unavailable' }
-      $request = $line | ConvertFrom-Json
-      if ($request.width -lt 1 -or $request.height -lt 1 -or $request.width -gt [Windows.Media.Ocr.OcrEngine]::MaxImageDimension -or $request.height -gt [Windows.Media.Ocr.OcrEngine]::MaxImageDimension) { throw 'Invalid OCR image dimensions' }
-      $bytes = [Convert]::FromBase64String($request.bgra)
-      if ($bytes.Length -ne $request.width * $request.height * 4) { throw 'Invalid OCR image buffer' }
-      $bitmap = New-Object Windows.Graphics.Imaging.SoftwareBitmap([Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,$request.width,$request.height,[Windows.Graphics.Imaging.BitmapAlphaMode]::Ignore)
+      $bitmap = New-Object Windows.Graphics.Imaging.SoftwareBitmap([Windows.Graphics.Imaging.BitmapPixelFormat]::Bgra8,[int]$width,[int]$height,[Windows.Graphics.Imaging.BitmapAlphaMode]::Ignore)
       $bitmap.CopyFromBuffer([System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::AsBuffer($bytes))
       $task = $asTask.MakeGenericMethod([Windows.Media.Ocr.OcrResult]).Invoke($null,@($engine.RecognizeAsync($bitmap)))
       $task.Wait()
@@ -2275,10 +2365,6 @@ try {
   }
 } catch { @{kind='error'; message=$_.Exception.Message} | ConvertTo-Json -Compress; exit 1 }
 `;
-function union(boxes) {
-  const x = Math.min(...boxes.map((box) => box.x)), y = Math.min(...boxes.map((box) => box.y));
-  return { x, y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: Math.max(...boxes.map((box) => box.y + box.height)) - y };
-}
 function sourceBox(value, width, height, angle) {
   const box = value;
   if (!box || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0) throw new Error("Invalid Windows OCR box");
@@ -2316,22 +2402,28 @@ function parseLayout(value, region) {
       }
       words.push({ text: word.text, box });
     }
-    if (words.length) lines.push({ text: line.text, words, box: union(words.map((word) => word.box)) });
+    if (words.length) lines.push({ text: line.text, words, box: unionRects(words.map((word) => word.box)) });
     else result.truncated = true;
   }
   result.lines = lines;
   return result;
 }
 async function createOcr(language) {
-  if (process.platform !== "win32") throw new Error("Windows OCR is unavailable on this platform");
+  if (language !== "zh-CN" && language !== "en-US") throw new Error("Unsupported OCR language");
+  if (process.platform !== "win32") throw new Error(OCR_PLATFORM_UNAVAILABLE);
   const source2 = script.replace("__LANGUAGE__", language).replace("__PARENT_PID__", String(process.pid)).replaceAll("__MAX_LINES__", String(DELTA_OCR_LIMITS.maxLines)).replaceAll("__MAX_WORDS__", String(DELTA_OCR_LIMITS.maxWords)).replaceAll("__MAX_LINE_CHARS__", String(DELTA_OCR_LIMITS.maxLineChars)).replaceAll("__MAX_WORD_CHARS__", String(DELTA_OCR_LIMITS.maxWordChars));
   const command = Buffer.from(source2, "utf16le").toString("base64");
   const child = spawn(
-    join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    powershellExecutable(),
     ["-NoProfile", "-NonInteractive", "-EncodedCommand", command],
     { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
   );
   let closed = false;
+  let markExited = () => {
+  };
+  const exited = new Promise((resolve) => {
+    markExited = resolve;
+  });
   let pending = null;
   const fail = (error) => {
     if (pending) {
@@ -2365,10 +2457,14 @@ async function createOcr(language) {
   });
   child.stderr.on("data", () => {
   });
-  child.stdin.on("error", (error) => fail(error));
+  child.stdin.on("error", (error) => {
+    const code = "code" in error ? error.code : void 0;
+    if (code !== "EOF" && code !== "EPIPE") fail(error);
+  });
   child.on("error", (error) => fail(error));
   child.on("exit", () => {
     closed = true;
+    markExited();
     fail(new Error("Windows OCR exited"));
   });
   const close = async () => {
@@ -2377,9 +2473,9 @@ async function createOcr(language) {
     fail(new Error("Windows OCR stopped"));
     lines.close();
     child.stdin.end();
-    const exited = new Promise((done) => child.once("exit", () => done()));
+    const stopped2 = new Promise((done) => child.once("exit", () => done()));
     const timer = setTimeout(() => child.kill(), 250);
-    await Promise.race([exited, new Promise((done) => setTimeout(done, 500))]);
+    await Promise.race([stopped2, new Promise((done) => setTimeout(done, 500))]);
     clearTimeout(timer);
     if (child.exitCode === null) child.kill();
   };
@@ -2395,8 +2491,15 @@ async function createOcr(language) {
     if (region.width * region.height > DELTA_MAX_ROI_PIXELS || region.bgra.byteLength !== region.width * region.height * 4) throw new Error("OCR region exceeds pixel limit");
     if (pending) throw new Error("Windows OCR already has a request");
     const result = response(3e3);
-    child.stdin.write(`${JSON.stringify({ width: region.width, height: region.height, bgra: Buffer.from(region.bgra).toString("base64") })}
-`);
+    const header2 = Buffer.allocUnsafe(16);
+    header2.writeUInt32LE(1380142916, 0);
+    header2.writeUInt32LE(region.width, 4);
+    header2.writeUInt32LE(region.height, 8);
+    header2.writeUInt32LE(region.bgra.byteLength, 12);
+    child.stdin.cork();
+    child.stdin.write(header2);
+    child.stdin.write(region.bgra);
+    child.stdin.uncork();
     const value = await result;
     return parseLayout(value, region);
   };
@@ -2404,14 +2507,18 @@ async function createOcr(language) {
     pid: child.pid,
     availableLanguages: Array.isArray(ready.availableLanguages) ? ready.availableLanguages.map(String) : [],
     language: typeof ready.language === "string" ? ready.language : null,
+    exited,
     recognizeLayout,
-    async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error("Windows OCR layout exceeds result limits");
-      return layout.lines.map((line) => line.text);
-    },
     close
   };
+}
+
+// src/pixels.ts
+function uiGreen(b, g, r) {
+  return g >= 105 && g - r >= 48 && g - b >= 24;
+}
+function bgraGray(b, g, r) {
+  return b * 3735 + g * 19235 + r * 9798 + 16384 >> 15;
 }
 
 // src/personal-text-fallback.ts
@@ -2433,7 +2540,7 @@ function personalTextRaster(source2, kind) {
   const mask = new Uint8Array(paddedWidth * paddedHeight).fill(255);
   const gray = kind === "white-gold-edge" ? new Uint8Array(sourceWidth * sourceHeight) : null;
   if (gray) for (let at = 0, pixel = 0; pixel < gray.length; pixel++, at += 4) {
-    gray[pixel] = source2.bgra[at] * 3735 + source2.bgra[at + 1] * 19235 + source2.bgra[at + 2] * 9798 + 16384 >> 15;
+    gray[pixel] = bgraGray(source2.bgra[at], source2.bgra[at + 1], source2.bgra[at + 2]);
   }
   for (let y = 0; y < height; y++) for (let x = 0; x < sourceWidth; x++) {
     const at = ((y + offsetY) * sourceWidth + x) * 4;
@@ -2598,6 +2705,23 @@ function samePersonalSignature(a, b) {
 
 // src/personal-attribution.ts
 var import_jpeg_js = __toESM(require_jpeg_js(), 1);
+
+// src/text.ts
+var stripWhitespace = (text) => text.replace(/\s+/gu, "");
+function compact(text) {
+  return stripWhitespace(text.normalize("NFKC"));
+}
+function compactUpper(text) {
+  return compact(text).toLocaleUpperCase("en-US");
+}
+function compactLower(text) {
+  return compact(text).toLowerCase();
+}
+function upperNFKC(text) {
+  return text.normalize("NFKC").toUpperCase();
+}
+
+// src/personal-attribution.ts
 var PERSONAL_ATTRIBUTION_ROI = { x: 0, y: 0.82, width: 1, height: 0.18 };
 var PERSONAL_ATTRIBUTION_LIMITS = { scale: 2, maxPixels: DELTA_MAX_ROI_PIXELS, footerStart: 0.6 };
 function hasSpectatorFrame(image) {
@@ -2647,34 +2771,32 @@ function personalAttributionRegion(evidence) {
 }
 function parsePersonalAttribution(layout, nickname, spectatorFrame = false) {
   if (layout.truncated || !layout.lines.some((line) => line.text.trim())) return "unknown";
-  const compact2 = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
-  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compact2(line.text)).join(" ");
+  const footer = layout.lines.filter((line) => line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart).map((line) => compactUpper(line.text)).join(" ");
   const controls = [/切换观战(?:对象)?|SWITCHSPECTAT/u, /观战名片|SPECTATORCARD/u, /退出观战|EXITSPECTAT/u];
   if (controls.filter((control) => control.test(footer)).length >= 2) return "other";
-  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compact2(line.text)).join("");
-  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compact2(line.text)));
-  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compact2(nickname) ? "other" : "own";
+  const controller = layout.lines.filter((line) => line.box.x >= layout.width * 0.38 && line.box.x + line.box.width <= layout.width * 0.62 && line.box.y + line.box.height / 2 >= layout.height * 0.1 && line.box.y + line.box.height / 2 <= layout.height * 0.4).sort((a, b) => a.box.x - b.box.x).map((line) => compactUpper(line.text)).join("");
+  const waiting = layout.lines.some((line) => line.box.x + line.box.width <= layout.width * 0.25 && line.box.y + line.box.height / 2 >= layout.height * PERSONAL_ATTRIBUTION_LIMITS.footerStart && /等待救援/u.test(compactUpper(line.text)));
+  return spectatorFrame && waiting && /[\p{L}]/u.test(controller) && controller !== compactUpper(nickname) ? "other" : "own";
 }
 
 // src/detector.ts
-var compact = (text) => text.normalize("NFKC").replace(/\s+/gu, "").toLocaleUpperCase("en-US");
 function parseDetection(lines, nickname, language) {
-  const name = compact(nickname);
+  const name = compactUpper(nickname);
   if (!name || !language) return null;
   const pattern = language === "en-US" ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = /* @__PURE__ */ new Map();
   for (const text of lines) {
     const normalized2 = text.normalize("NFKC").trim(), match = pattern.exec(normalized2);
-    if (!match || compact(match[1]) !== name) continue;
-    const target = compact(match[3]);
+    if (!match || compactUpper(match[1]) !== name) continue;
+    const target = compactUpper(match[3]);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]) || /击倒|击杀/u.test(match[3])) continue;
-    const verb = compact(match[2]), kind = verb === "KNOCKEDDOWN" || verb === "\u51FB\u5012" ? "knockdown" : "kill";
+    const verb = compactUpper(match[2]), kind = verb === "KNOCKEDDOWN" || verb === "\u51FB\u5012" ? "knockdown" : "kill";
     const key = createHash("sha256").update(`${kind}:${name}:${target}`).digest("hex");
     matches.set(key, { kind, text, dedupKey: key, attribution: { relation: "self", basis: "actor-text", assisted: false, spectating: false }, recognition: {
       kind: "actor-text",
       text,
-      actor: match[1].normalize("NFKC").replace(/\s+/gu, ""),
-      target: match[3].normalize("NFKC").replace(/\s+/gu, "")
+      actor: compact(match[1]),
+      target: compact(match[3])
     } });
   }
   return matches.size === 1 ? [...matches.values()][0] : null;
@@ -2683,22 +2805,36 @@ function sameBaseline(a, b) {
   const height = Math.max(a.height, b.height), overlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
   return Math.min(a.height, b.height) >= height / 2 && overlap >= Math.min(a.height, b.height) * 0.6 && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) <= height * 0.35;
 }
+function joinedTextAt(words, boundary) {
+  let offset = 0;
+  for (const [index, word] of words.entries()) {
+    offset += compactUpper(word.text).length;
+    if (offset > boundary) return true;
+    if (offset === boundary) {
+      const next = words[index + 1]?.box;
+      return !!next && next.x - (word.box.x + word.box.width) <= Math.min(word.box.height, next.height) * 0.25;
+    }
+  }
+  return false;
+}
 function personalFeedbackRows(layout) {
   const words = layout.lines.flatMap((line) => line.words);
-  return words.filter((word) => compact(word.text).includes("\u51FB")).map((anchor) => {
+  return words.filter((word) => compactUpper(word.text).includes("\u51FB")).map((anchor) => {
     const row = words.filter((word) => sameBaseline(anchor.box, word.box)).sort((a, b) => a.box.x - b.box.x);
-    const text = row.map((word) => word.text).join(" "), normalized2 = compact(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
+    const text = row.map((word) => word.text).join(" "), normalized2 = compactUpper(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0] : null;
     const prefix = normalized2.slice(0, action?.index ?? normalized2.indexOf("\u51FB"));
-    return { row, anchor, text, normalized: normalized2, action, assisted: /协|助/u.test(prefix) };
+    const end = action ? action.index + action[0].length : 0;
+    const settingsLabel = !!action && (/(?:[与和或及]|[杀倒败][、/]|启用|监测|配置|识别|回应|统计)$/u.test(prefix) || !prefix && normalized2.slice(end) === "\u8BC6\u522B" && joinedTextAt(row, end));
+    return { row, anchor, text, normalized: normalized2, action, settingsLabel, assisted: /协|助/u.test(prefix) };
   });
 }
-function assistedPersonalRows(layout) {
-  return layout.truncated ? [] : personalFeedbackRows(layout).filter((row) => row.assisted).map((row) => row.anchor.box);
-}
 function attributePersonalFeedback(matches, layouts, view = "own") {
-  const assisted = layouts.flatMap(assistedPersonalRows);
-  return matches.map((match) => {
+  const rows = layouts.filter((layout) => !layout.truncated).flatMap(personalFeedbackRows);
+  const assisted = rows.filter((row) => row.assisted && !row.settingsLabel).map((row) => row.anchor.box);
+  const captions = rows.filter((row) => row.settingsLabel);
+  const candidates = matches.filter((match) => !match.personalAction || !captions.some((row) => sameBaseline(row.anchor.box, match.personalAction)));
+  return candidates.map((match) => {
     if (match.recognition.kind !== "personal-feedback-text") return match;
     const uncertain = view === "unknown" || layouts.some((layout) => layout.truncated) || match.attribution.relation === "unknown";
     const assist = match.attribution.assisted || !!match.personalAction && assisted.some((box) => sameBaseline(box, match.personalAction));
@@ -2715,13 +2851,13 @@ function attributePersonalFeedback(matches, layouts, view = "own") {
 function parsePersonalFeedback(layout, nickname) {
   if (layout.truncated || !nickname.trim()) return [];
   const matches = /* @__PURE__ */ new Map();
-  for (const { row, text, normalized: normalized2, action, assisted } of personalFeedbackRows(layout)) {
-    if (!action) continue;
+  for (const { row, text, normalized: normalized2, action, assisted, settingsLabel } of personalFeedbackRows(layout)) {
+    if (!action || settingsLabel) continue;
     const kind = action[0] === "\u51FB\u5012" ? "knockdown" : "kill", target = normalized2.slice(action.index + action[0].length);
     let offset = 0;
     const boxes = [], targetBoxes = [];
     for (const word of row) {
-      const length = compact(word.text).length, start2 = Math.max(offset, action.index), end = Math.min(offset + length, action.index + action[0].length);
+      const length = compactUpper(word.text).length, start2 = Math.max(offset, action.index), end = Math.min(offset + length, action.index + action[0].length);
       if (end > start2) boxes.push({ ...word.box, x: word.box.x + word.box.width * (start2 - offset) / length, width: word.box.width * (end - start2) / length });
       const targetStart = Math.max(offset, action.index + action[0].length);
       if (offset + length > targetStart) targetBoxes.push({
@@ -2733,14 +2869,8 @@ function parsePersonalFeedback(layout, nickname) {
     }
     const x = Math.min(...boxes.map((box) => box.x)), last = boxes[boxes.length - 1];
     const personalAction = { x, y: last.y, width: Math.max(...boxes.map((box) => box.x + box.width)) - x, height: last.height };
-    const targetX = Math.min(...targetBoxes.map((box) => box.x)), targetY = Math.min(...targetBoxes.map((box) => box.y));
-    const personalTarget = targetBoxes.length ? {
-      x: targetX,
-      y: targetY,
-      width: Math.max(...targetBoxes.map((box) => box.x + box.width)) - targetX,
-      height: Math.max(...targetBoxes.map((box) => box.y + box.height)) - targetY
-    } : void 0;
-    const key = createHash("sha256").update(`${kind}:${compact(nickname)}:${assisted ? "teammate" : "self"}:${target}`).digest("hex");
+    const personalTarget = targetBoxes.length ? unionRects(targetBoxes) : void 0;
+    const key = createHash("sha256").update(`${kind}:${compactUpper(nickname)}:${assisted ? "teammate" : "self"}:${target}`).digest("hex");
     matches.set(key, {
       kind,
       text,
@@ -2754,13 +2884,8 @@ function parsePersonalFeedback(layout, nickname) {
   }
   return [...matches.values()];
 }
-function calibrationFitsBudget(calibration) {
-  const regions = [calibration.roi, ...calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : []];
-  const pixels = regions.map((roi) => captureRectangle(roi, calibration.display.bounds.width, calibration.display.bounds.height));
-  return regions.reduce((area, roi) => area + roi.width * roi.height, 0) <= DELTA_MAX_ROI_AREA && pixels.reduce((count, box) => count + box.width * box.height, 0) <= DELTA_MAX_ROI_PIXELS;
-}
 function matchesCalibration(region, calibration) {
-  return region.topologyRevision === calibration.topologyRevision && JSON.stringify(region.display) === JSON.stringify(calibration.display);
+  return region.topologyRevision === calibration.topologyRevision && sameDeltaDisplay(region.display, calibration.display);
 }
 function detectionStatus(config) {
   const calibration = config.calibration;
@@ -2785,17 +2910,19 @@ function fingerprint(region) {
   return result;
 }
 var Detector = class {
-  constructor(config, evidence, confirmed, openOcr = createOcr) {
+  constructor(config, evidence, confirmed, openOcr = createOcr, backoffMs = deltaOcrBackoffMs) {
     this.config = config;
     this.evidence = evidence;
     this.confirmed = confirmed;
     this.openOcr = openOcr;
+    this.backoffMs = backoffMs;
     this.status = detectionStatus(config);
   }
   config;
   evidence;
   confirmed;
   openOcr;
+  backoffMs;
   status;
   ocr = null;
   pending = null;
@@ -2803,6 +2930,9 @@ var Detector = class {
   closed = false;
   previous = null;
   lastScanAtMs = 0;
+  failures = 0;
+  inflight = null;
+  backoffCancel = null;
   submit(region) {
     if (this.closed || !this.config.enabled || !this.config.nickname.trim() || !this.config.language || !this.config.calibration || this.status.reason === "roi-too-large" || this.status.reason === "feedback-language-unsupported") return;
     if (!matchesCalibration(region, this.config.calibration)) {
@@ -2810,6 +2940,7 @@ var Detector = class {
       this.status.reason = "source-changed";
       this.pending = null;
       this.previous = null;
+      this.backoffCancel?.();
       void this.ocr?.close();
       return;
     }
@@ -2822,6 +2953,25 @@ var Detector = class {
     }
   }
   async drain() {
+    while (!this.closed && this.status.phase !== "error" && this.status.phase !== "unavailable" && this.status.reason !== "source-changed") {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = "unavailable";
+          this.status.reason = "ocr-unavailable";
+          this.status.lastError = String(error);
+          this.pending = null;
+          this.inflight = null;
+          return;
+        }
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  async scan() {
     try {
       if (!this.ocr) {
         this.ocr = await this.openOcr(this.config.language);
@@ -2842,9 +2992,10 @@ var Detector = class {
       while (this.pending && !this.closed) {
         const region = this.pending;
         this.pending = null;
-        if (Date.now() - this.lastScanAtMs < 500) {
+        const wait = 500 - (Date.now() - this.lastScanAtMs);
+        if (wait > 0) {
           this.pending = region;
-          await new Promise((done) => setTimeout(done, 50));
+          await this.waitBackoff(wait);
           continue;
         }
         const next = fingerprint(region);
@@ -2853,7 +3004,9 @@ var Detector = class {
         if (difference / next.length < 1.5) continue;
         this.previous = next;
         this.lastScanAtMs = Date.now();
+        this.inflight = region;
         const initial = await this.recognize(region);
+        this.inflight = null;
         if (this.closed || this.status.reason === "source-changed") return;
         this.status.scans++;
         this.status.phase = "ready";
@@ -2885,18 +3038,51 @@ var Detector = class {
         }
       }
     } catch (error) {
-      if (!this.closed && this.status.reason !== "source-changed") {
-        this.status.phase = this.ocr ? "error" : "unavailable";
-        this.status.reason = this.ocr ? null : "ocr-unavailable";
-        this.status.lastError = String(error);
-        this.pending = null;
-        await this.ocr?.close();
-      }
+      if (this.inflight && !this.pending) this.pending = this.inflight;
+      throw error;
     }
+  }
+  async noteTransient(error) {
+    const port = this.ocr;
+    this.ocr = null;
+    this.previous = null;
+    this.inflight = null;
+    this.failures++;
+    this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) {
+      this.status.phase = "starting";
+      this.status.reason = null;
+    } else {
+      this.status.phase = "error";
+      this.status.reason = null;
+      this.pending = null;
+    }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  waitBackoff(ms) {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.backoffCancel = null;
+        resolve();
+      }, ms);
+      this.backoffCancel = () => {
+        clearTimeout(timer);
+        this.backoffCancel = null;
+        resolve();
+      };
+    });
   }
   async recognize(region, verify = false) {
     if (this.recognitionStopped()) return [];
-    const layout = await this.ocr.recognizeLayout(region), raw = this.matches(layout);
+    const layout = await this.ocr.recognizeLayout(region);
+    this.failures = 0;
+    this.status.lastError = null;
+    const raw = this.matches(layout);
     const finish = (matches2) => matches2.map((match) => match.personalAction ? { ...match, personalSignature: createPersonalSignature(region, match.personalAction, match.personalTarget) } : match);
     if (!this.config.calibration?.personalFeedbackRoi || this.config.language !== "zh-CN") return finish(raw);
     const layouts = [layout], matches = raw;
@@ -2937,6 +3123,7 @@ var Detector = class {
   async close() {
     this.closed = true;
     this.pending = null;
+    this.backoffCancel?.();
     await this.ocr?.close();
     await this.running;
   }
@@ -2945,19 +3132,27 @@ var Detector = class {
 // src/loot-detector.ts
 var import_jpeg_js2 = __toESM(require_jpeg_js(), 1);
 import { createHash as createHash2 } from "node:crypto";
-function lootCaptureRoi(calibration) {
-  const a = calibration.itemsRoi, b = calibration.contextRoi, x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-}
-function lootCalibrationFitsBudget(calibration) {
-  try {
-    const { width, height } = calibration.display.bounds;
-    const items = captureRectangle(calibration.itemsRoi, width, height), context = captureRectangle(calibration.contextRoi, width, height);
-    const whole = captureRectangle(lootCaptureRoi(calibration), width, height);
-    return items.width * items.height <= DELTA_MAX_LOOT_ITEMS_PIXELS && context.width * context.height <= DELTA_MAX_LOOT_CONTEXT_PIXELS && calibration.itemsRoi.width * calibration.itemsRoi.height + calibration.contextRoi.width * calibration.contextRoi.height <= DELTA_MAX_LOOT_ROI_AREA && whole.width * whole.height <= DELTA_MAX_ROI_PIXELS;
-  } catch {
-    return false;
+
+// src/image.ts
+function copyPixelRect(source2, sourceWidth, x, y, width, height) {
+  const target = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row++) {
+    const start2 = ((y + row) * sourceWidth + x) * 4;
+    target.set(source2.subarray(start2, start2 + width * 4), row * width * 4);
   }
+  return target;
+}
+
+// src/loot-detector.ts
+function lootDetailPixels(region, box) {
+  const margin = Math.max(2, Math.round(box.height * 0.08));
+  const x = Math.max(0, box.x - margin), y = Math.max(0, box.y - margin);
+  const width = Math.min(640, region.width - x, box.x + box.width + margin - x);
+  const height = Math.min(400, region.height - y, box.y + box.height + margin - y);
+  return { width, height, bgra: copyPixelRect(region.bgra, region.width, x, y, width, height) };
+}
+function lootCaptureRoi(calibration) {
+  return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
 function lootStatus(config, combat) {
   const reason = !config.language ? "language-required" : !config.calibration ? "calibration-required" : !lootCalibrationFitsBudget(config.calibration) ? "roi-too-large" : combat?.enabled && combat.language && combat.language !== config.language ? "language-conflict" : null;
@@ -2974,14 +3169,14 @@ function lootStatus(config, combat) {
 }
 function parseLootContext(layout) {
   if (layout.truncated) return null;
-  const text = layout.lines.map((line) => line.text).join(" ").normalize("NFKC").toUpperCase();
-  const compact2 = text.replace(/\s+/gu, ""), contains = (pattern) => pattern.test(text) || pattern.test(compact2);
-  const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains).length;
+  const text = upperNFKC(layout.lines.map((line) => line.text).join(" "));
+  const folded = stripWhitespace(text), contains2 = (pattern) => pattern.test(text) || pattern.test(folded);
+  const classes = [/背包|\bBACKPACK\b/u, /胸挂|\bRIG\b/u, /保险箱|安全箱|\bSAFE\b|\bSECURE\b/u, /装备|\bEQUIPMENT\b/u].filter(contains2).length;
   if (!classes) return null;
-  if (contains(/容器|搜索物资|\bCONTAINER\b/u)) return "container";
-  if (contains(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return "loot";
+  if (contains2(/容器|搜索物资|\bCONTAINER\b/u)) return "container";
+  if (contains2(/战利品|搜索|搜刮|\bLOOT\b|\bSEARCH\b/u)) return "loot";
   const capacityHeading = layout.lines.some((line) => {
-    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(line.text.normalize("NFKC").replace(/\s+/gu, ""));
+    const match = /^(?:安全箱|保险箱):?(\d{1,3})\/(\d{1,3})(?![\d/])/u.exec(compact(line.text));
     return match && Number(match[2]) > 0 && Number(match[1]) <= Number(match[2]);
   });
   if (capacityHeading) return "inventory";
@@ -3160,22 +3355,16 @@ function lootNamespace(region, calibration) {
   return JSON.stringify([region.display, region.topologyRevision, calibration]);
 }
 function evidenceRegions(evidence, calibration) {
-  const { width, height } = calibration.display.bounds, union2 = captureRectangle(lootCaptureRoi(calibration), width, height);
+  const { width, height } = calibration.display.bounds, union = captureRectangle(lootCaptureRoi(calibration), width, height);
   const extract = (roi) => {
-    const box = captureRectangle(roi, width, height), data = new Uint8Array(box.width * box.height * 4);
-    if (evidence.region.width !== union2.width || evidence.region.height !== union2.height) throw new Error("Invalid native item evidence dimensions");
-    for (let y = 0; y < box.height; y++) {
-      const start2 = ((box.y - union2.y + y) * union2.width + box.x - union2.x) * 4;
-      data.set(evidence.region.bgra.subarray(start2, start2 + box.width * 4), y * box.width * 4);
-    }
+    const box = captureRectangle(roi, width, height);
+    if (evidence.region.width !== union.width || evidence.region.height !== union.height) throw new Error("Invalid native item evidence dimensions");
+    const data = copyPixelRect(evidence.region.bgra, union.width, box.x - union.x, box.y - union.y, box.width, box.height);
     return { ...evidence.region, width: box.width, height: box.height, bgra: data };
   };
   const decoded = import_jpeg_js2.default.decode(evidence.capture.jpeg, { useTArray: true, maxMemoryUsageInMB: 32, maxResolutionInMP: 4 });
-  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height), rgba = new Uint8Array(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start2 = ((crop.y + y) * decoded.width + crop.x) * 4;
-    rgba.set(decoded.data.subarray(start2, start2 + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = captureRectangle(calibration.itemsRoi, decoded.width, decoded.height);
+  const rgba = copyPixelRect(decoded.data, decoded.width, crop.x, crop.y, crop.width, crop.height);
   return { items: {
     capture: evidence.capture,
     region: extract(calibration.itemsRoi),
@@ -3184,17 +3373,21 @@ function evidenceRegions(evidence, calibration) {
   }, context: extract(calibration.contextRoi) };
 }
 var LootDetector = class {
-  constructor(config, evidence, candidate, openOcr = createOcr, combat) {
+  constructor(config, evidence, candidate, openOcr = createOcr, combat, backoffMs = deltaOcrBackoffMs, sampleIntervalMs = DELTA_LOOT_SAMPLE_INTERVAL_MS) {
     this.config = config;
     this.evidence = evidence;
     this.candidate = candidate;
     this.openOcr = openOcr;
+    this.backoffMs = backoffMs;
+    this.sampleIntervalMs = sampleIntervalMs;
     this.status = lootStatus(config, combat);
   }
   config;
   evidence;
   candidate;
   openOcr;
+  backoffMs;
+  sampleIntervalMs;
   status;
   visible = [];
   pending = null;
@@ -3204,12 +3397,15 @@ var LootDetector = class {
   tracker = new LootItemTracker();
   ocr = null;
   lastScanAtMs = 0;
+  failures = 0;
+  backoffCancel = null;
   submit(region) {
     if (this.closed || !this.config.enabled || !this.config.calibration || this.status.phase === "unavailable" || this.status.phase === "error" || this.status.reason) return;
     if (!matchesCalibration(region, { ...this.config.calibration, roi: this.config.calibration.itemsRoi })) {
       this.status.phase = "uncalibrated";
       this.status.reason = "source-changed";
       this.clearVisible();
+      this.backoffCancel?.();
       void this.ocr?.close();
       return;
     }
@@ -3225,15 +3421,34 @@ var LootDetector = class {
     this.status.scene = null;
   }
   async drain() {
-    try {
-      while (this.pending && !this.closed) {
-        if (Date.now() - this.lastScanAtMs < DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          await new Promise((done) => setTimeout(done, 50));
-          continue;
+    while (!this.recognitionStopped() && this.status.phase !== "error" && this.status.phase !== "unavailable") {
+      try {
+        await this.scan();
+        return;
+      } catch (error) {
+        if (this.recognitionStopped()) return;
+        if (ocrUnavailableOnPlatform(error)) {
+          this.status.phase = "unavailable";
+          this.status.reason = "ocr-unavailable";
+          this.status.lastError = String(error);
+          this.clearVisible();
+          return;
         }
-        const region = this.pending;
-        this.pending = null;
-        this.lastScanAtMs = Date.now();
+        if (!await this.noteTransient(error)) return;
+      }
+    }
+  }
+  async scan() {
+    while (this.pending && !this.closed) {
+      const wait = this.sampleIntervalMs - (Date.now() - this.lastScanAtMs);
+      if (wait > 0) {
+        await this.waitBackoff(wait);
+        continue;
+      }
+      const region = this.pending;
+      this.pending = null;
+      this.lastScanAtMs = Date.now();
+      try {
         const candidates = detectLootItems(region, this.config.sensitivity), now = Date.now(), calibration = this.config.calibration;
         const namespace = lootNamespace(region, calibration);
         this.visible = candidates.map((item) => item.signature);
@@ -3273,6 +3488,8 @@ var LootDetector = class {
           return;
         }
         const layout = await this.ocr.recognizeLayout(parts.context);
+        this.failures = 0;
+        this.status.lastError = null;
         if (this.recognitionStopped()) {
           await this.ocr.close();
           return;
@@ -3288,20 +3505,49 @@ var LootDetector = class {
           this.status.candidates++;
           this.candidate(parts.items, {
             dedupKey,
+            box: match.box,
             signature: match.signature,
             recognition: { kind: "loot-candidate", text, target: "", scene, basis: "red-grid-ui", quality: "unconfirmed", itemName: null }
           });
         }
+      } catch (error) {
+        if (!this.pending) this.pending = region;
+        throw error;
       }
-    } catch (error) {
-      if (!this.recognitionStopped()) {
-        this.status.phase = this.ocr ? "error" : "unavailable";
-        this.status.reason = this.ocr ? null : "ocr-unavailable";
-        this.status.lastError = String(error);
-        this.clearVisible();
-      }
-      await this.ocr?.close();
     }
+  }
+  async noteTransient(error) {
+    const port = this.ocr;
+    this.ocr = null;
+    this.failures++;
+    this.status.lastError = String(error);
+    const retry = this.failures < DELTA_OCR_TRANSIENT_FAILURE_LIMIT;
+    if (retry) {
+      this.status.phase = "starting";
+      this.status.reason = null;
+    } else {
+      this.status.phase = "error";
+      this.status.reason = null;
+      this.clearVisible();
+    }
+    await port?.close();
+    if (this.recognitionStopped() || !retry) return false;
+    await this.waitBackoff(this.backoffMs(this.failures));
+    return !this.recognitionStopped();
+  }
+  waitBackoff(ms) {
+    if (this.closed || ms <= 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.backoffCancel = null;
+        resolve();
+      }, ms);
+      this.backoffCancel = () => {
+        clearTimeout(timer);
+        this.backoffCancel = null;
+        resolve();
+      };
+    });
   }
   recognitionStopped() {
     return this.closed || this.status.reason === "source-changed";
@@ -3309,13 +3555,11 @@ var LootDetector = class {
   async close() {
     this.closed = true;
     this.clearVisible();
+    this.backoffCancel?.();
     await this.ocr?.close();
     await this.running;
   }
 };
-
-// src/protocol.ts
-var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 
 // src/calibration.ts
 var WIDTH = 2560;
@@ -3340,7 +3584,7 @@ function supportsPreparation(source2) {
   return source2.display.bounds.width === WIDTH && source2.display.bounds.height === HEIGHT;
 }
 function sameCalibrationSource(a, b) {
-  return a.topologyRevision === b.topologyRevision && isDeepStrictEqual(a.display, b.display);
+  return a.topologyRevision === b.topologyRevision && sameDeltaDisplay(a.display, b.display);
 }
 
 // src/calibration-anchors-grid.ts
@@ -3478,41 +3722,7 @@ function measureSafeBox(frame, anchor) {
   return { title: offset(title), items: offset(items) };
 }
 
-// src/calibration-anchors.ts
-var labels = {
-  start: /^[开犴]始游戏$/u,
-  gear: /^配装$/u,
-  deploy: /^出发$/u,
-  squad: /^出发[[(]?[1-3彐]\/([3彐引])[\])]?$/u,
-  solo: /^行前备战$/u,
-  mode: /^端游对局[一、]?$/u,
-  matching: /^(匹配成功|正在匹配|正在搜索对局)$/u,
-  safe: /^(安全箱|保险箱|safebox|securecontainer)$/u
-};
-var labelPatterns = Object.entries(labels);
-var extent = (a, b) => {
-  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
-};
-function lineAnchors(line) {
-  const result = [];
-  for (let first = 0; first < line.words.length; first++) {
-    let text = "", box = line.words[first].box;
-    for (let last = first; last < Math.min(line.words.length, first + 10); last++) {
-      const word = line.words[last];
-      text += word.text.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
-      if (text.length > 16) break;
-      box = extent(box, word.box);
-      const label = labelPatterns.find(([name, pattern]) => pattern.test(name === "safe" ? text.replace(/[:;：；]+$/u, "") : text))?.[0];
-      if (!label) continue;
-      const previous = line.words[first - 1], next = line.words[last + 1];
-      if (previous && /[\p{L}\p{N}]$/u.test(previous.text.trim()) && box.x - previous.box.x - previous.box.width < box.height * 0.6) continue;
-      if (next && (label === "safe" ? new RegExp("^\\p{L}", "u") : /^[\p{L}\p{N}]/u).test(next.text.trim()) && next.box.x - box.x - box.width < box.height * 0.6) continue;
-      result.push({ label, box });
-    }
-  }
-  return result;
-}
+// src/calibration-viewport.ts
 function project(area, roi) {
   const x = Math.floor(roi.x * area.width), y = Math.floor(roi.y * area.height);
   return {
@@ -3532,9 +3742,9 @@ function hintedViewport(frame, hint) {
 function letterboxedViewport(frame) {
   const { width, height } = frame;
   function border(horizontal, reverse) {
-    const across = horizontal ? width : height, extent2 = horizontal ? height : width;
-    for (let offset = 0; offset < extent2 * 0.32; offset++) {
-      const coordinate = reverse ? extent2 - 1 - offset : offset;
+    const across = horizontal ? width : height, extent = horizontal ? height : width;
+    for (let offset = 0; offset < extent * 0.32; offset++) {
+      const coordinate = reverse ? extent - 1 - offset : offset;
       let dark = 0;
       for (let n = 0; n < 48; n++) {
         const cross = Math.floor((n + 0.5) * across / 48);
@@ -3552,6 +3762,41 @@ function letterboxedViewport(frame) {
   const [x, right] = pair(false), [y, bottom] = pair(true);
   return { x, y, width: width - x - right, height: height - y - bottom };
 }
+function calibrationViewports(frame, aspectRatio) {
+  return [hintedViewport(frame, aspectRatio), letterboxedViewport(frame), { x: 0, y: 0, width: frame.width, height: frame.height }];
+}
+
+// src/calibration-anchors.ts
+var labels = {
+  start: /^[开犴]始游戏$/u,
+  gear: /^配装$/u,
+  deploy: /^出发$/u,
+  squad: /^出发[[(]?[1-3彐]\/([3彐引])[\])]?$/u,
+  solo: /^行前备战$/u,
+  mode: /^端游对局[一、]?$/u,
+  matching: /^(匹配成功|正在匹配|正在搜索对局)$/u,
+  safe: /^(安全箱|保险箱|safebox|securecontainer)$/u
+};
+var labelPatterns = Object.entries(labels);
+function lineAnchors(line) {
+  const result = [];
+  for (let first = 0; first < line.words.length; first++) {
+    let text = "", box = line.words[first].box;
+    for (let last = first; last < Math.min(line.words.length, first + 10); last++) {
+      const word = line.words[last];
+      text += word.text.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+      if (text.length > 16) break;
+      box = unionRect(box, word.box);
+      const label = labelPatterns.find(([name, pattern]) => pattern.test(name === "safe" ? text.replace(/[:;：；]+$/u, "") : text))?.[0];
+      if (!label) continue;
+      const previous = line.words[first - 1], next = line.words[last + 1];
+      if (previous && /[\p{L}\p{N}]$/u.test(previous.text.trim()) && box.x - previous.box.x - previous.box.width < box.height * 0.6) continue;
+      if (next && (label === "safe" ? new RegExp("^\\p{L}", "u") : /^[\p{L}\p{N}]/u).test(next.text.trim()) && next.box.x - box.x - box.width < box.height * 0.6) continue;
+      result.push({ label, box });
+    }
+  }
+  return result;
+}
 function scanRaster(frame, box, enlargeText, maxScale) {
   const budget = 175e4;
   if (enlargeText && 4 * box.width * box.height <= budget && Math.max(box.width, box.height) <= 1150) {
@@ -3559,7 +3804,7 @@ function scanRaster(frame, box, enlargeText, maxScale) {
     for (let y = 0, i = 0; y < box.height; y++) {
       let at = ((box.y + y) * frame.width + box.x) * 4;
       for (let x = 0; x < box.width; x++, i++, at += 4) {
-        gray[i] = frame.bgra[at] * 3735 + frame.bgra[at + 1] * 19235 + frame.bgra[at + 2] * 9798 + 16384 >> 15;
+        gray[i] = bgraGray(frame.bgra[at], frame.bgra[at + 1], frame.bgra[at + 2]);
       }
     }
     return doubleOcrRaster(gray, box.width, box.height);
@@ -3596,8 +3841,8 @@ function matchingBanner(frame, start2, action) {
     let green = 0;
     for (let column = 0; column < count; column++) {
       const x = start2.x + Math.floor((column + 0.5) * span / count);
-      const at = (frame.width * y + x) * 4, g = frame.bgra[at + 1];
-      if (g >= 105 && g - frame.bgra[at + 2] >= 48 && g - frame.bgra[at] >= 24) green++;
+      const at = (frame.width * y + x) * 4;
+      if (uiGreen(frame.bgra[at], frame.bgra[at + 1], frame.bgra[at + 2])) green++;
     }
     rows = green >= 21 ? rows + 1 : 0;
     if (rows >= Math.max(3, start2.height / 4)) return true;
@@ -3612,7 +3857,7 @@ function preparation(frame, anchors) {
     const hasMode = modes.some((mode) => mode.y + mode.height < gear.y && gear.y - mode.y <= gear.height * 18 && Math.abs(mode.x - gear.x) <= 14 * Math.max(gear.width, mode.width));
     for (const button of [...boxes("squad"), ...hasMode ? boxes("deploy") : []]) {
       const gap = button.x - gear.x - gear.width;
-      if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) && Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(extent(gear, button));
+      if (gap >= 0 && gap <= 8 * Math.max(button.width, gear.width) && Math.abs(gear.y + gear.height / 2 - button.y - button.height / 2) <= Math.max(button.height, gear.height)) actions.push(unionRect(gear, button));
     }
   }
   for (const start2 of boxes("start")) for (const action of actions) {
@@ -3670,8 +3915,8 @@ function preparationFocus(frame, anchors) {
   return start2 ? candidates : candidates.map((box) => ({ ...box, y: Math.max(0, box.y - 3 * size), height: Math.min(box.y, 3 * size) }));
 }
 async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
-  const whole = { x: 0, y: 0, width: frame.width, height: frame.height };
-  const hinted = hintedViewport(frame, aspectRatio);
+  const areas = calibrationViewports(frame, aspectRatio);
+  const whole = areas[2];
   const scanned = /* @__PURE__ */ new Set(), anchors = [];
   const measured = /* @__PURE__ */ new Map();
   async function scan(box, enlarge = false, maxScale = 2.4) {
@@ -3702,7 +3947,6 @@ async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
     }
     return chosen && { scene: "inventory", loot: { contextRoi: relative(chosen.title, frame), itemsRoi: relative(chosen.items, frame) } };
   }
-  const areas = [hinted, letterboxedViewport(frame), whole];
   for (const area of areas) {
     await scan(project(area, { x: 0.24, y: 0.49, width: 0.42, height: 0.43 }));
     const loot = inventory();
@@ -3734,6 +3978,454 @@ async function detectCalibrationAnchors(frame, aspectRatio, ocr2) {
   return null;
 }
 
+// src/profile-identity.ts
+var profileTitles = /* @__PURE__ */ new Set(["\u4E2A\u4EBA\u4FE1\u606F", "\u4E2A\u4EBA\u8D44\u6599", "\u4E2A\u4EBA\u6863\u6848", "\u6211\u7684\u8D44\u6599", "\u6211\u7684\u6863\u6848", "myprofile", "playerprofile", "playerinfo", "personalinformation"]);
+var nicknameLabel = /^(?:(?:玩\s*家\s*|游\s*戏\s*|角\s*色\s*)?昵\s*称|(?:player\s+name|nick\s*name))(?=\s|[:：]|$)[\s:：]*(.*)$/iu;
+var uidField = /^(?:cn\s*)?(?:u\s*i\s*d|玩家\s*ID|数字\s*ID|角色\s*ID)(?:\s*[:：#=_-].*|\s*\d[\d\s_-]*)?$/iu;
+var placeholders = /* @__PURE__ */ new Set(["\u533F\u540D\u73A9\u5BB6", "anonymousplayer"]);
+var profileTab = { x: 0.066, y: 0.047, width: 0.069, height: 0.047 };
+var watermarkFormat = /^(?:cn)?uid[:#]?(\d{8,24})(?:_\d+)?$/u;
+var playerNumberFormat = /^(?:编号|uid|playerid)[:#]?(\d{8,24})$/u;
+var isProfileTitle = (text) => profileTitles.has(compactLower(text));
+var excludesOwnProfile = (text) => /^(?:出发(?:\(?[123]\/3\)?)?|准备就绪|邀请入队|他人资料|举报玩家|reportplayer)$/u.test(compactLower(text));
+var hasNicknameLabel = (text) => nicknameLabel.test(text.trim());
+function validIdentityNickname(value) {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 64 || /[\p{Cc}\p{Cf}]/u.test(value)) return false;
+  const name = value.trim();
+  return !placeholders.has(compactLower(name)) && !uidField.test(name.normalize("NFKC"));
+}
+function adjacentValue(label, other) {
+  const a = label.box, b = other.box;
+  const overlap = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  const gap = b.x - (a.x + a.width);
+  return other !== label && overlap >= 0.65 * Math.min(a.height, b.height) && gap >= 0 && gap <= 4 * a.height;
+}
+function contains(area, box) {
+  return box.x >= area.x && box.y >= area.y && box.x + box.width <= area.x + area.width && box.y + box.height <= area.y + area.height;
+}
+function selectedProfileTab(frame, area) {
+  const stripe = project(area, { x: 0.072, y: 0.087, width: 0.056, height: 0.01 });
+  for (let y = stripe.y; y < stripe.y + stripe.height; y++) {
+    let green = 0;
+    for (let i = 0; i < 16; i++) {
+      const x = stripe.x + Math.floor((i + 0.5) * stripe.width / 16);
+      const p = (y * frame.width + x) * 4;
+      const b = frame.bgra[p], g = frame.bgra[p + 1], r = frame.bgra[p + 2];
+      if (uiGreen(b, g, r)) green++;
+    }
+    if (green >= 15) return true;
+  }
+  return false;
+}
+function accountNumber(lines, area, format) {
+  const matches = lines.filter((line) => contains(area, line.box)).map((line) => format.exec(compactLower(line.text))?.[1]).filter(Boolean);
+  return matches.length === 1 ? matches[0] : void 0;
+}
+function frameLines(layout, frame) {
+  const sx = frame.width / layout.width, sy = frame.height / layout.height;
+  return layout.lines.map((line) => ({ ...line, box: {
+    x: line.box.x * sx,
+    y: line.box.y * sy,
+    width: line.box.width * sx,
+    height: line.box.height * sy
+  } }));
+}
+function cardAccounts(lines, area) {
+  const watermark = project(area, { x: 0, y: 0, width: 0.35, height: 0.04 });
+  const footer = project(area, { x: 0.737, y: 0.899, width: 0.22, height: 0.047 });
+  return { account: accountNumber(lines, watermark, watermarkFormat), player: accountNumber(lines, footer, playerNumberFormat) };
+}
+function validCardName(name) {
+  return validIdentityNickname(name) && /^[\p{L}\p{M}\p{N}_-]+$/u.test(name) && new RegExp("\\p{L}", "u").test(name) && !isProfileTitle(name) && !/^(?:编号|uid|playerid|lv|等级)[_-]?\d*$/iu.test(name);
+}
+function cardNameLine(lines, area) {
+  const row = project(area, { x: 0.755, y: 0.788, width: 0.193, height: 0.023 });
+  const overlapping = lines.filter(({ box }) => box.y < row.y + row.height && box.y + box.height > row.y && box.x < row.x + row.width && box.x + box.width > row.x);
+  if (overlapping.length !== 1) return;
+  const line = overlapping[0];
+  if (contains(row, line.box) && line.box.x <= area.x + 0.761 * area.width && validCardName(line.text.trim())) return line;
+}
+function cardIdentity(layout, frame, aspectRatio, labeledName) {
+  const lines = frameLines(layout, frame);
+  const candidates = new Set(labeledName ? [labeledName] : []);
+  let selected = false, inactiveCard = false, activeCard = false;
+  for (const area of calibrationViewports(frame, aspectRatio)) {
+    const tab = project(area, profileTab);
+    if (!lines.some((line) => contains(tab, line.box) && profileTitles.has(compactLower(line.text)))) continue;
+    const { account, player } = cardAccounts(lines, area);
+    if (account && player && account !== player) return { status: "profile-unrecognized" };
+    if (!selectedProfileTab(frame, area)) {
+      if (account && player) inactiveCard = true;
+      continue;
+    }
+    selected = true;
+    if (!account || !player) continue;
+    activeCard = true;
+    const name = cardNameLine(lines, area);
+    if (name) candidates.add(name.text.trim());
+  }
+  if (inactiveCard && !activeCard) return { status: "profile-unrecognized" };
+  const [nickname] = candidates;
+  if (nickname && candidates.size === 1) return { status: "candidate", nickname };
+  return { status: selected ? "nickname-unreadable" : "profile-unrecognized" };
+}
+function profileIdentity(layout, frame, aspectRatio = DEFAULT_GAME_ASPECT_RATIO) {
+  const lines = layout.lines;
+  if (!lines.some((line) => isProfileTitle(line.text)) || lines.some((line) => excludesOwnProfile(line.text))) {
+    return { status: "profile-unrecognized" };
+  }
+  if (layout.truncated) return { status: "nickname-unreadable" };
+  const candidates = /* @__PURE__ */ new Set();
+  for (const line of lines) {
+    const match = nicknameLabel.exec(line.text.trim());
+    if (!match) continue;
+    const neighbors = match[1] ? [match[1]] : lines.filter((other) => adjacentValue(line, other)).map((other) => other.text);
+    if (neighbors.length !== 1) return { status: "nickname-unreadable" };
+    const name = neighbors[0].trim();
+    if (!validIdentityNickname(name) || !/[\p{L}]/u.test(name) || /[:：]|\s(?:UID|玩家\s*ID)(?=[\s\d#=_-]|$)/iu.test(name) || profileTitles.has(compactLower(name))) return { status: "nickname-unreadable" };
+    candidates.add(name);
+  }
+  const [nickname] = candidates;
+  if (candidates.size <= 1 && frame) return cardIdentity(layout, frame, aspectRatio, nickname);
+  return nickname && candidates.size === 1 ? { status: "candidate", nickname } : { status: "nickname-unreadable" };
+}
+
+// src/profile-name-region.ts
+var nativeAspect = 16 / 9;
+function* horizontalRuns(area, bright) {
+  const right = area.x + area.width;
+  for (let y = area.y; y < area.y + area.height; y++) {
+    let x = area.x;
+    while (x < right) {
+      while (x < right && !bright(x, y)) x++;
+      const start2 = x;
+      while (x < right && bright(x, y)) x++;
+      if (x > start2) yield { x: start2, y, width: x - start2 };
+    }
+  }
+}
+function briefcaseTop(viewport, bright) {
+  const area = project(viewport, { x: 0.742, y: 0.79, width: 0.016, height: 0.012 });
+  const sy = viewport.height / 1440;
+  for (const run of horizontalRuns(area, bright)) {
+    if (run.width < 65e-4 * viewport.width || run.width > 0.012 * viewport.width) continue;
+    const sample = (u, dy) => bright(run.x + Math.round((run.width - 1) * u), run.y + Math.round(dy * sy));
+    if (sample(0.2, -2) || sample(0.8, -2) || sample(0.5, -2)) continue;
+    if (!sample(0.18, 2) || !sample(0.82, 2) || !sample(0.18, 10) || !sample(0.82, 10)) continue;
+    if (!sample(0.5, 5) && sample(0.5, 11)) return run;
+  }
+}
+function matchesPencil(line, viewport, bright) {
+  const height = line.width * nativeAspect * viewport.height / viewport.width;
+  const gapY = line.y - Math.max(1, Math.round(height * 0.13));
+  for (let x = line.x; x < line.x + line.width; x++) if (bright(x, gapY)) return false;
+  const matchesSlice = (dy, center) => {
+    const y = line.y - dy;
+    let left = line.width, right = -1;
+    for (let dx = 0; dx < line.width; dx++) {
+      if (bright(line.x + dx, y)) {
+        left = Math.min(left, dx);
+        right = dx;
+      }
+    }
+    return right >= left && right - left + 1 <= line.width * 0.43 && Math.abs((left + right + 1) / (2 * line.width) - center) <= 0.15;
+  };
+  for (let dy = Math.round(height * 0.24); dy <= Math.round(height * 0.71); dy++) {
+    if (!matchesSlice(dy, 0.92 * dy / height - 0.105)) return false;
+  }
+  return matchesSlice(Math.round(height * 0.91), 0.8);
+}
+function profileNameRegion(frame, viewport, report) {
+  const missing = (reason) => {
+    report?.(reason);
+    return null;
+  };
+  const neutral = (threshold) => (x2, y2) => {
+    const at = (y2 * frame.width + x2) * 4;
+    const b = frame.bgra[at], g = frame.bgra[at + 1], r = frame.bgra[at + 2];
+    const low = Math.min(r, g, b);
+    return low >= threshold && Math.max(r, g, b) - low <= 32;
+  };
+  const inkPixel = neutral(145);
+  const badge = briefcaseTop(viewport, inkPixel);
+  if (!badge) return missing("badge-missing");
+  const row = project(viewport, { x: 0.754, y: 0.7885, width: 0.218, height: 0.0235 });
+  const baselines = project(viewport, { x: 0.754, y: 0.802, width: 0.218, height: 0.011 });
+  const shaft = neutral(117);
+  let pencil;
+  for (const run of horizontalRuns(baselines, neutral(102))) {
+    if (run.x <= badge.x + badge.width || run.width < 6e-3 * viewport.width || run.width > 0.011 * viewport.width) continue;
+    if (!matchesPencil(run, viewport, shaft)) continue;
+    if (pencil && Math.abs(pencil.x - run.x) > run.width * 0.2) return missing("pencil-ambiguous");
+    pencil = run;
+  }
+  if (!pencil) return missing("pencil-missing");
+  let start2 = badge.x + badge.width;
+  for (let y2 = badge.y; y2 < row.y + row.height; y2++) {
+    let x2 = badge.x + Math.floor(0.75 * badge.width);
+    while (x2 < pencil.x && inkPixel(x2, y2)) x2++;
+    start2 = Math.max(start2, x2);
+  }
+  const end = pencil.x;
+  let left = end, right = start2 - 1, top = row.y + row.height, bottom = row.y - 1;
+  for (let y2 = row.y; y2 < row.y + row.height; y2++) for (let x2 = start2; x2 < end; x2++) {
+    if (!inkPixel(x2, y2)) continue;
+    left = Math.min(left, x2);
+    right = Math.max(right, x2);
+    top = Math.min(top, y2);
+    bottom = Math.max(bottom, y2);
+  }
+  if (right < left) return missing("no-ink");
+  if (left <= start2 || right >= end - 1 || top <= row.y || bottom >= row.y + row.height - 1) return missing("ink-touches-edge");
+  const ink = { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  if (left - start2 > badge.width * 0.7 || end - right > badge.width * 1.2) return missing("icon-gap");
+  const padX = Math.max(1, Math.round(ink.height * 0.22 * viewport.width / (viewport.height * nativeAspect)));
+  const padY = Math.max(1, Math.round(ink.height * 0.25));
+  const x = Math.max(start2, left - padX), y = Math.max(row.y, top - padY);
+  report?.("found");
+  return { box: {
+    x,
+    y,
+    width: Math.min(end, right + 1 + padX) - x,
+    height: Math.min(row.y + row.height, bottom + 1 + padY) - y
+  }, ink };
+}
+
+// src/profile-recognition.ts
+var unreadable = { status: "nickname-unreadable" };
+var unrecognized = { status: "profile-unrecognized" };
+var historyTab = { x: 0.135, y: 0.047, width: 0.066, height: 0.047 };
+function singleLine(layout) {
+  return layout && !layout.truncated && layout.lines.length === 1 ? layout.lines[0] : void 0;
+}
+async function readField(read, field, box, format) {
+  for (const twice of [false, true]) {
+    const line = singleLine(await read(field, box, twice));
+    const match = line && format.exec(compactLower(line.text));
+    if (match) return match[1];
+  }
+}
+async function recognizedTab(read, area) {
+  const box = project(area, profileTab);
+  let nearTitle = false;
+  for (const twice of [false, true]) {
+    const line = singleLine(await read("profile-tab", box, twice));
+    if (!line) continue;
+    const title = compactLower(line.text);
+    if (isProfileTitle(title)) return "exact";
+    if (new RegExp("^\\p{Script=Han}{4}$", "u").test(title) && [...title].filter((c, i) => c !== "\u4E2A\u4EBA\u4FE1\u606F"[i]).length === 1) nearTitle = true;
+  }
+  if (!nearTitle) return "no-match";
+  const history = await readField(read, "history-tab", project(area, historyTab), /^(历史战绩)$/u);
+  return history ? "history-confirmed" : "history-unconfirmed";
+}
+function lineRegion(ink, frame) {
+  const pad = Math.ceil(ink.height * 0.2);
+  const x = Math.max(0, Math.floor(ink.x) - pad), y = Math.max(0, Math.floor(ink.y) - pad);
+  return { ink, box: {
+    x,
+    y,
+    width: Math.min(frame.width, Math.ceil(ink.x + ink.width) + pad) - x,
+    height: Math.min(frame.height, Math.ceil(ink.y + ink.height) + pad) - y
+  } };
+}
+function nameText(line) {
+  const name = line.text.trim();
+  if (validCardName(name)) return { name };
+  const tokens = name.split(/\s+/u);
+  if (tokens.length < 2 || tokens.length !== line.words.length || !tokens.every((token, i) => token === line.words[i].text)) {
+    return { rejection: "invalid-text" };
+  }
+  for (let i = 1; i < line.words.length; i++) {
+    const left = line.words[i - 1], right = line.words[i];
+    if (!new RegExp("\\p{Script=Han}$", "u").test(left.text) && !new RegExp("^\\p{Script=Han}", "u").test(right.text)) return { rejection: "invalid-text" };
+    const gap = right.box.x - left.box.x - left.box.width;
+    const overlap = Math.min(left.box.y + left.box.height, right.box.y + right.box.height) - Math.max(left.box.y, right.box.y);
+    const height = Math.min(left.box.height, right.box.height);
+    if (gap < -0.1 * height || gap > 0.2 * height || overlap < 0.65 * height) return { rejection: "word-spacing" };
+  }
+  const joined = tokens.join("");
+  return validCardName(joined) ? { name: joined } : { rejection: "invalid-text" };
+}
+async function readName(read, region, overviewName, trace) {
+  const { box, ink } = region;
+  let previous = overviewName;
+  let complete = false;
+  for (const twice of [false, true]) {
+    const scale = twice ? 2 : 1;
+    const layout = await read("nickname", box, twice);
+    const line = singleLine(layout);
+    if (!layout) continue;
+    if (!line) {
+      trace?.({ stage: "name-reading", scale, result: "no-single-line" });
+      continue;
+    }
+    const reading = nameText(line);
+    if ("rejection" in reading) {
+      trace?.({ stage: "name-reading", scale, result: reading.rejection });
+      continue;
+    }
+    const { name } = reading;
+    if (previous && previous !== name) {
+      trace?.({ stage: "name-reading", scale, result: "conflict" });
+      return;
+    }
+    const corroborated = name === previous;
+    previous = name;
+    const toFrame = box.width / layout.width;
+    const left = box.x + line.box.x * toFrame, right = left + line.box.width * toFrame;
+    const slack = Math.max(2, ink.height * 0.16);
+    const leftErrorPx = left - ink.x, rightErrorPx = right - ink.x - ink.width;
+    const coversInk = Math.abs(leftErrorPx) <= slack && Math.abs(rightErrorPx) <= slack;
+    trace?.({
+      stage: "name-reading",
+      scale,
+      leftErrorPx,
+      rightErrorPx,
+      tolerancePx: slack,
+      result: !coversInk ? "ink-edges-mismatch" : corroborated ? "corroborated" : "covers-ink"
+    });
+    if (!coversInk) continue;
+    complete = true;
+    if (corroborated) return name;
+  }
+  return complete ? previous : void 0;
+}
+async function recognizeProfile(frame, aspectRatio, ocr2, deadline = Date.now() + 2e4, trace) {
+  let ocrCalls = 0, deadlineSkipped = false;
+  const finish = (result, reason) => {
+    trace?.({ stage: "finish", status: result.status, reason, ocrCalls, localOcrStarted: ocrCalls > 1, deadlineSkipped });
+    return result;
+  };
+  const performOcr = async (field, box, scale, raster) => {
+    ocrCalls++;
+    trace?.({ stage: "ocr-start", field, box, scale, width: raster.width, height: raster.height });
+    try {
+      const layout = await ocr2.recognizeLayout({ ...frame, ...raster });
+      trace?.({ stage: "ocr-result", field, box, scale, lineCount: layout.lines.length, truncated: layout.truncated });
+      return layout;
+    } catch (error) {
+      finish({ status: "ocr-unavailable" }, "ocr-error");
+      throw error;
+    }
+  };
+  trace?.({ stage: "recognition-start", deadline, remainingMs: Math.max(0, deadline - Date.now()) });
+  const areas = calibrationViewports(frame, aspectRatio);
+  const overview = await performOcr("overview", areas[2], 1, scanRaster(frame, areas[2], false, 1));
+  if (overview.lines.some((line) => excludesOwnProfile(line.text))) return finish(unrecognized, "excluded-page");
+  if (overview.truncated) return finish(unreadable, "overview-truncated");
+  const lines = frameLines(overview, frame);
+  const legacy = profileIdentity(overview);
+  const labeled = overview.lines.some((line) => hasNicknameLabel(line.text));
+  trace?.({ stage: "legacy", status: legacy.status, hasNicknameLabel: labeled });
+  if (labeled && legacy.status === "nickname-unreadable") return finish(legacy, "legacy-label-unreadable");
+  const tiles = /* @__PURE__ */ new Map();
+  let card = false, selected = false;
+  const read = async (field, box, twice) => {
+    const scale = twice ? 2 : 1;
+    const key = [box.x, box.y, box.width, box.height, twice].join("/");
+    const previous = tiles.get(key);
+    if (previous) {
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "cached" });
+      return previous;
+    }
+    if (Date.now() >= deadline) {
+      deadlineSkipped = true;
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "deadline" });
+      return;
+    }
+    const raster = scanRaster(frame, box, twice, 1);
+    if (twice && (raster.width !== 2 * box.width || raster.height !== 2 * box.height)) {
+      trace?.({ stage: "ocr-skip", field, box, scale, reason: "scale-unavailable" });
+      return;
+    }
+    const layout = await performOcr(field, box, scale, raster);
+    tiles.set(key, layout);
+    return layout;
+  };
+  const sameViewport = (a, b) => Math.abs(a.x - b.x) <= frame.width * 3e-3 && Math.abs(a.width - b.width) <= frame.width * 3e-3 && Math.abs(a.y - b.y) <= frame.height * 3e-3 && Math.abs(a.height - b.height) <= frame.height * 3e-3;
+  const [hint, measured, whole] = areas;
+  const viewports = [measured];
+  if (!sameViewport(hint, measured)) viewports.unshift(hint);
+  if (!viewports.some((area) => sameViewport(area, whole))) viewports.push(whole);
+  for (const area of viewports) {
+    const selectedGreenLine = selectedProfileTab(frame, area);
+    trace?.({ stage: "viewport", kind: area === hint ? "hint" : area === measured ? "measured" : "whole", box: area, selectedGreenLine });
+    if (!selectedGreenLine) continue;
+    selected = true;
+    const evidence = await recognizedTab(read, area);
+    trace?.({ stage: "title", evidence });
+    if (evidence !== "exact" && evidence !== "history-confirmed") continue;
+    card = true;
+    const full = cardAccounts(lines, area);
+    const account = full.account ?? await readField(read, "watermark", project(area, { x: 0.011, y: 3e-3, width: 0.18, height: 0.022 }), watermarkFormat);
+    const player = full.player ?? await readField(read, "player-number", project(area, { x: 0.743, y: 0.902, width: 0.128, height: 0.032 }), playerNumberFormat);
+    trace?.({ stage: "accounts", hasAccount: !!account, hasPlayer: !!player, match: account && player ? account === player : null });
+    if (account && player && account !== player) return finish(unrecognized, "account-mismatch");
+    const fullName = cardNameLine(lines, area);
+    const iconRegion = profileNameRegion(frame, area, trace && ((result) => trace({ stage: "name-icons", result })));
+    const region = iconRegion ?? (account && player && fullName ? lineRegion(fullName.box, frame) : null);
+    if (!region) {
+      trace?.({ stage: "name-region", source: "missing" });
+      continue;
+    }
+    const { box, ink } = region;
+    trace?.({ stage: "name-region", source: iconRegion ? "icons" : "overview", box, ink, paddingPx: {
+      left: ink.x - box.x,
+      top: ink.y - box.y,
+      right: box.x + box.width - ink.x - ink.width,
+      bottom: box.y + box.height - ink.y - ink.height
+    } });
+    const name = await readName(read, region, fullName?.text.trim(), trace);
+    if (!name) return finish(unreadable, "nickname-unreadable");
+    if (legacy.status === "candidate" && legacy.nickname !== name) return finish(unreadable, "legacy-name-conflict");
+    return finish({ status: "candidate", nickname: name }, "card-candidate");
+  }
+  if (!card) {
+    if (legacy.status !== "candidate") return finish(legacy, selected ? "title-unconfirmed" : "no-selected-tab");
+    const playerCard = viewports.some((area) => {
+      const { account, player } = cardAccounts(lines, area);
+      return account && player || profileNameRegion(frame, area);
+    });
+    return playerCard ? finish(unrecognized, "legacy-card-veto") : finish(legacy, "legacy-candidate");
+  }
+  return finish(unreadable, "name-region-missing");
+}
+
+// src/identity-debug-png.ts
+import { crc32, deflateSync } from "node:zlib";
+function chunk(type, data) {
+  const result = Buffer.allocUnsafe(12 + data.length);
+  result.writeUInt32BE(data.length);
+  result.write(type, 4, 4, "ascii");
+  data.copy(result, 8);
+  result.writeUInt32BE(crc32(result.subarray(4, -4)), result.length - 4);
+  return result;
+}
+function encodeIdentityFrame({ width, height, bgra }) {
+  const header2 = Buffer.alloc(13);
+  header2.writeUInt32BE(width);
+  header2.writeUInt32BE(height, 4);
+  header2[8] = 8;
+  header2[9] = 2;
+  const scanlines = Buffer.allocUnsafe(height * (1 + width * 3));
+  let read = 0, write = 0;
+  for (let y = 0; y < height; y++) {
+    scanlines[write++] = 0;
+    for (let x = 0; x < width; x++, read += 4) {
+      scanlines[write++] = bgra[read + 2];
+      scanlines[write++] = bgra[read + 1];
+      scanlines[write++] = bgra[read];
+    }
+  }
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    chunk("IHDR", header2),
+    chunk("IDAT", deflateSync(scanlines, { level: 1 })),
+    chunk("IEND", Buffer.alloc(0))
+  ]);
+}
+
 // src/calibration-capture.ts
 var MAX_CAPTURE_PIXELS = 7680 * 4320;
 var FULL_DISPLAY = { x: 0, y: 0, width: 1, height: 1 };
@@ -3743,7 +4435,7 @@ function hasMatchingBanner(region) {
   for (const y of [10, 20, 30]) for (let column = 0; column < columns; column++) {
     const x = Math.floor((column + 0.5) * region.width / columns), at = (y * region.width + x) * 4;
     const b = region.bgra[at], g = region.bgra[at + 1], r = region.bgra[at + 2];
-    if (g >= 105 && g - r >= 48 && g - b >= 24) green++;
+    if (uiGreen(b, g, r)) green++;
   }
   return green >= 42;
 }
@@ -3765,24 +4457,111 @@ async function analyzeCapture(request, region, capture) {
     return { status: "ocr-unavailable", capture };
   }
 }
-async function runCalibrationCapture(request) {
+function errorReason(error, operation) {
+  const message = error instanceof Error ? error.message : "";
+  if (/timed?\s*out/i.test(message)) return operation + "-timeout";
+  if (message === "OCR region exceeds pixel limit") return "ocr-pixel-limit";
+  if (message === "displayChanged" || message === "displayUnavailable") return message === "displayChanged" ? "source-changed" : "display-unavailable";
+  return operation + "-exception";
+}
+function errorDetails(error) {
+  if (!(error instanceof Error)) return {};
+  const locations = [];
+  for (const line of (error.stack ?? "").split("\n").slice(1)) {
+    const location = /[\\/]((?:profile-[a-z-]+|calibration(?:-[a-z-]+)?|engine-child|standalone-capture|identity-debug-png|ocr)\.(?:js|ts):\d+:\d+)\)?$/.exec(line);
+    if (location) locations.push(location[1]);
+    if (locations.length === 4) break;
+  }
+  const errorType = ["TypeError", "RangeError", "ReferenceError", "SyntaxError"].includes(error.name) ? error.name : "Error";
+  return { errorType, locations };
+}
+async function readProfile(region, language, aspectRatio, deadline, progress) {
+  let operation = "open-ocr";
+  try {
+    const ocr2 = await createOcr(language || "zh-CN");
+    try {
+      progress?.({ kind: "trace", event: { stage: "ocr-open", language: ocr2.language, availableLanguages: ocr2.availableLanguages } });
+      if (!ocr2.language) return { status: "identity", suggestion: { status: "ocr-unavailable" }, reason: "ocr-language-unavailable" };
+      operation = "recognize-profile";
+      const suggestion = await recognizeProfile(region, aspectRatio, ocr2, deadline, progress ? (event) => progress({ kind: "trace", event }) : void 0);
+      return { status: "identity", suggestion };
+    } finally {
+      await ocr2.close();
+    }
+  } catch (error) {
+    const reason = errorReason(error, "ocr");
+    progress?.({ kind: "trace", event: { stage: "error", operation, reason, ...errorDetails(error) } });
+    return { status: "identity", suggestion: { status: "ocr-unavailable" }, reason };
+  }
+}
+async function runCalibrationCapture(request, sink) {
+  const identityDeadline = Date.now() + 2e4;
   let source2;
+  const identity = request.kind === "identity-suggest";
+  const progress = identity && sink ? (event) => {
+    try {
+      sink(event);
+    } catch {
+    }
+  } : void 0;
+  const failure = (reason) => ({ status: "capture-unavailable", ...identity && { reason } });
+  let operation = "open-source";
   try {
     const module = await import(request.frameSourceModule);
     source2 = await module.createFrameSource();
+    operation = "probe-display";
     const probe = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
-    if (request.displayId ? probe.display.id !== request.displayId : !probe.display.primary) return { status: "capture-unavailable" };
+    if (request.displayId ? probe.display.id !== request.displayId : !probe.display.primary) return failure("display-mismatch");
     if (request.kind === "calibration-source") return { status: "source", source: { display: probe.display, topologyRevision: probe.topologyRevision } };
     const { width, height } = probe.display.bounds;
+    progress?.({ kind: "trace", event: {
+      stage: "display",
+      width,
+      height,
+      displayId: probe.display.id,
+      systemNumber: probe.display.systemNumber,
+      scaleFactor: probe.display.scaleFactor
+    } });
     if (width * height > MAX_CAPTURE_PIXELS) return { status: "unsupported-layout" };
+    if (request.kind === "calibration-preview") {
+      const capture2 = await source2.capture(request.displayId);
+      return sameCalibrationSource(probe, capture2.frame) && capture2.jpeg.byteLength <= DELTA_MAX_JPEG_BYTES ? { status: "manual-preview", capture: capture2 } : failure("source-changed");
+    }
+    if (identity) {
+      operation = "capture-frame";
+      const region2 = await source2.captureRoi(request.displayId, FULL_DISPLAY);
+      if (!sameCalibrationSource(probe, region2)) return failure("source-changed");
+      if (region2.width !== width || region2.height !== height || region2.bgra.byteLength !== width * height * 4) return failure("invalid-frame");
+      if (progress) {
+        try {
+          progress({
+            kind: "frame",
+            width,
+            height,
+            displayId: region2.display.id,
+            systemNumber: region2.display.systemNumber,
+            capturedAt: region2.capturedAt,
+            png: encodeIdentityFrame(region2)
+          });
+        } catch (error) {
+          progress({ kind: "trace", event: { stage: "error", operation: "encode-frame", reason: "png-encoding-failed", ...errorDetails(error) } });
+        }
+      }
+      const result2 = await readProfile(region2, request.language || "zh-CN", request.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO, identityDeadline, progress);
+      operation = "verify-display";
+      const current2 = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
+      return sameCalibrationSource(current2, probe) ? result2 : failure("source-changed");
+    }
     const { capture, region } = await source2.captureEvidence(request.displayId, FULL_DISPLAY);
     if (!sameCalibrationSource(probe, capture.frame) || !sameCalibrationSource(probe, region) || capture.frame.capturedAt !== region.capturedAt || capture.jpeg.byteLength > DELTA_MAX_JPEG_BYTES) return { status: "capture-unavailable" };
     const result = region.width === width && region.height === height && region.bgra.byteLength === width * height * 4 ? await analyzeCapture(request, region, capture) : { status: "unsupported-layout", capture };
     const current = await source2.captureRoi(request.displayId, CALIBRATION_SOURCE_PROBE);
     if (!sameCalibrationSource(current, capture.frame)) return { status: "capture-unavailable" };
     return result;
-  } catch {
-    return { status: "capture-unavailable" };
+  } catch (error) {
+    const reason = errorReason(error, "capture");
+    progress?.({ kind: "trace", event: { stage: "error", operation, reason, ...errorDetails(error) } });
+    return failure(reason);
   } finally {
     await source2?.close?.().catch(() => {
     });
@@ -3801,6 +4580,7 @@ var DELTA_SPEECH_DEFAULTS = {
 var DELTA_DEFAULTS = {
   enabled: false,
   observer: { enabled: false },
+  standaloneDisplayId: "",
   captureIntervalMs: 1e3,
   calibrationHotkeyEnabled: true,
   gameAspectRatio: DEFAULT_GAME_ASPECT_RATIO,
@@ -3820,6 +4600,10 @@ var DELTA_DEFAULTS = {
 
 // src/shared-ocr.ts
 var SharedOcr = class {
+  constructor(openPort = createOcr) {
+    this.openPort = openPort;
+  }
+  openPort;
   port = null;
   language = "";
   tail = Promise.resolve();
@@ -3833,7 +4617,7 @@ var SharedOcr = class {
     if (this.port && language !== this.language) throw new Error("OCR language conflict");
     if (!this.port) {
       this.language = language;
-      this.port = createOcr(language);
+      this.port = this.openPort(language);
     }
     const owned = this.port;
     this.leases++;
@@ -3848,6 +4632,9 @@ var SharedOcr = class {
       throw error;
     }
     if (this.closed || this.port !== owned) throw new Error("OCR service stopped");
+    void port.exited.then(() => {
+      if (this.port === owned) void this.retire(owned);
+    });
     let released = false, release = null;
     const recognizeLayout = (region) => {
       if (released || this.closed || this.port !== owned) return Promise.reject(new Error("OCR lease closed"));
@@ -3855,15 +4642,14 @@ var SharedOcr = class {
       }).then(() => {
         if (released || this.closed || this.port !== owned) throw new Error("OCR lease closed");
         return port.recognizeLayout(region);
+      }).then((layout) => layout, (error) => {
+        if (this.port === owned && ocrProcessGone(error)) void this.retire(owned);
+        throw error;
       });
       this.tail = request;
       return request;
     };
-    return { ...port, recognizeLayout, async recognize(region) {
-      const layout = await recognizeLayout(region);
-      if (layout.truncated) throw new Error("OCR layout exceeds result limits");
-      return layout.lines.map((line) => line.text);
-    }, close: () => {
+    return { ...port, recognizeLayout, close: () => {
       if (released) return release ?? Promise.resolve();
       released = true;
       if (this.port !== owned || --this.leases > 0) return Promise.resolve();
@@ -3872,6 +4658,7 @@ var SharedOcr = class {
     } };
   }
   retire(owned) {
+    if (this.port !== owned) return this.retiring ?? Promise.resolve();
     this.port = null;
     this.language = "";
     this.leases = 0;
@@ -3908,13 +4695,7 @@ function calibrationState(frame, enabled, calibration, fitsBudget) {
   else if (a.x !== b.x || a.y !== b.y || current.rotation !== saved.rotation || current.name !== saved.name || current.systemNumber !== saved.systemNumber || current.primary !== saved.primary) reason = "geometry-changed";
   else if (frame.topologyRevision !== calibration.topologyRevision) reason = "topology-changed";
   else if (!matchesCalibration(frame, calibration)) reason = "geometry-changed";
-  if (!reason) {
-    try {
-      if (!fitsBudget()) reason = "roi-too-large";
-    } catch {
-      reason = "roi-too-large";
-    }
-  }
+  if (!reason && !fitsBudget()) reason = "roi-too-large";
   return { status: reason ? "invalid" : "compatible", reason };
 }
 function startupCheck(frame, detection, loot) {
@@ -3942,6 +4723,9 @@ function startupCheck(frame, detection, loot) {
     )
   };
 }
+
+// src/engine-ipc.ts
+var DELTA_ENGINE_VERSION = 1;
 
 // src/engine-child.ts
 var active = false;
@@ -3977,7 +4761,7 @@ async function stop() {
   source = null;
 }
 async function start(message) {
-  if (active || message.version !== 1) return;
+  if (active || message.version !== DELTA_ENGINE_VERSION) return;
   generation = message.generation;
   const { settings } = message;
   displayId = settings.displayId;
@@ -4022,7 +4806,8 @@ async function start(message) {
       cropJpeg: evidence.cropJpeg,
       recognition: match.recognition,
       attribution: null,
-      lootSignature: match.signature
+      lootSignature: match.signature,
+      lootDetail: lootDetailPixels(evidence.region, match.box)
     });
   }, (language) => ocr.open(language), settings.detection);
   active = true;
@@ -4044,8 +4829,24 @@ async function start(message) {
     sampling = (async () => {
       try {
         const calibration2 = settings.detection.calibration;
-        const region = await source.captureRoi(displayId, { x: 0, y: 0, width: 1e-6, height: 1e-6 });
-        if (!active) return;
+        const detect = !!(settings.detection.enabled && calibration2 && !detector?.status.reason);
+        const lootReady = !!(loot.enabled && loot.calibration && !lootDetector?.status.reason);
+        const lootDue = lootReady && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS;
+        const rois = detect ? [calibration2.roi, ...calibration2.personalFeedbackRoi ? [calibration2.personalFeedbackRoi] : []] : [];
+        if (lootDue && loot.calibration) rois.push(loot.calibration.itemsRoi);
+        if (!rois.length) rois.push({ x: 0, y: 0, width: 1e-6, height: 1e-6 });
+        const regions = [];
+        if (rois.length > 1 && source.captureRois) {
+          regions.push(...await source.captureRois(displayId, rois));
+          if (!active) return;
+          if (regions.length !== rois.length) throw Object.assign(new Error("Incomplete capture"), { code: "captureFailed" });
+          captures += regions.length;
+        } else for (const roi of rois) {
+          regions.push(await source.captureRoi(displayId, roi));
+          if (!active) return;
+          captures++;
+        }
+        const region = regions[0];
         const bounds = region.display.bounds, scale = Math.min(1, 1280 / bounds.width, 800 / bounds.height);
         const width = Math.max(1, Math.round(bounds.width * scale)), height = Math.max(1, Math.round(bounds.height * scale));
         latest = {
@@ -4058,29 +4859,32 @@ async function start(message) {
           mime: "image/jpeg",
           transform: { originX: bounds.x, originY: bounds.y, scaleX: width / bounds.width, scaleY: height / bounds.height }
         };
-        captures++;
-        let sampledSource = region;
+        let cursor = 0, sampledSource = region;
         const checks = startupCheck(latest, settings.detection, loot);
-        if (checks.detection.status === "compatible" && !detector?.status.reason && calibration2) {
-          const feed = await source.captureRoi(displayId, calibration2.roi);
-          if (!active) return;
-          captures++;
-          sampledSource = feed;
-          if (calibration2.personalFeedbackRoi && matchesCalibration(feed, calibration2)) {
-            const personal = await source.captureRoi(displayId, calibration2.personalFeedbackRoi);
-            if (!active) return;
-            captures++;
-            sampledSource = personal;
-            detector?.submit(personal);
-          } else detector?.submit(feed);
-        } else if (checks.detection.status === "invalid") detector?.submit(region);
-        const lootSourceMatches = !!loot.calibration && matchesCalibration(sampledSource, { ...loot.calibration, roi: loot.calibration.itemsRoi });
+        if (detect && calibration2) {
+          const feed = regions[cursor++];
+          if (checks.detection.status === "compatible") {
+            sampledSource = feed;
+            if (calibration2.personalFeedbackRoi && matchesCalibration(feed, calibration2)) {
+              sampledSource = regions[cursor++];
+              detector?.submit(sampledSource);
+            } else {
+              if (calibration2.personalFeedbackRoi) cursor++;
+              detector?.submit(feed);
+            }
+          } else {
+            if (calibration2.personalFeedbackRoi) cursor++;
+            if (checks.detection.status === "invalid") detector?.submit(feed);
+          }
+        } else if (checks.detection.status === "invalid") detector?.submit(sampledSource);
+        const lootCalibration = loot.calibration;
+        const lootSourceMatches = !!lootCalibration && matchesCalibration(sampledSource, { ...lootCalibration, roi: lootCalibration.itemsRoi });
         if (checks.loot.status === "invalid" || loot.enabled && !lootSourceMatches) lootDetector?.submit(sampledSource);
-        if (checks.loot.status === "compatible" && loot.calibration && lootSourceMatches && !lootDetector?.status.reason && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          lastLootAtMs = Date.now();
-          const items = await source.captureRoi(displayId, loot.calibration.itemsRoi);
+        if (lootReady && lootCalibration && checks.loot.status === "compatible" && lootSourceMatches && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
+          const items = lootDue ? regions[cursor++] : await source.captureRoi(displayId, lootCalibration.itemsRoi);
+          if (!lootDue) captures++;
           if (!active) return;
-          captures++;
+          lastLootAtMs = Date.now();
           lootDetector?.submit(items);
         }
         publish();
@@ -4089,8 +4893,15 @@ async function start(message) {
         if (!active) return;
         latest = null;
         lootDetector?.clearVisible();
-        send({ kind: "error", generation, reason: "source-unavailable", message: String(err) });
-        captureTimer = setTimeout(sample, Math.max(1e3, settings.captureIntervalMs));
+        const code = err && typeof err === "object" && "code" in err ? err.code : void 0;
+        if (code === "captureTransportFailed" || code === "captureFailed") {
+          active = false;
+          if (heartbeat) clearInterval(heartbeat);
+          send({ kind: "error", generation, reason: "worker-failed", message: String(err) });
+        } else {
+          send({ kind: "error", generation, reason: "source-unavailable", message: String(err) });
+          captureTimer = setTimeout(sample, Math.max(1e3, settings.captureIntervalMs));
+        }
       }
     })();
   };
@@ -4108,11 +4919,8 @@ function simulate(message) {
     rgba[i + 3] = 255;
   }
   const full = import_jpeg_js3.default.encode({ data: rgba, width, height }, 90).data, decoded = import_jpeg_js3.default.decode(full, { useTArray: true });
-  const crop = { x: 64, y: 0, width: 64, height: 40 }, cropped = Buffer.alloc(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start2 = ((crop.y + y) * width + crop.x) * 4;
-    cropped.set(decoded.data.subarray(start2, start2 + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = { x: 64, y: 0, width: 64, height: 40 };
+  const cropped = copyPixelRect(decoded.data, width, crop.x, crop.y, crop.width, crop.height);
   const display = latest.display;
   send({
     kind: "event",
@@ -4139,14 +4947,18 @@ process.on("message", (message) => {
   if (message.kind === "start") void start(message).catch((err) => send({ kind: "error", generation, reason: "worker-failed", message: String(err) }));
   else if (message.kind === "stop") void stop().finally(() => process.exit(0));
   else if (message.kind === "simulate") simulate(message);
-  else if (message.kind === "preview" && active) {
+  else if (message.kind === "preview" && !active) send({ kind: "preview", generation, requestId: message.requestId, capture: null });
+  else if (message.kind === "preview") {
     void source.capture(displayId).then((capture) => {
       if (active) send({ kind: "preview", generation, requestId: message.requestId, capture });
     }).catch(() => {
       if (active) send({ kind: "preview", generation, requestId: message.requestId, capture: null });
     });
-  } else if (message.kind === "calibration-suggest" || message.kind === "calibration-source") {
-    void runCalibrationCapture(message).then((result) => {
+  } else if (message.kind === "calibration-suggest" || message.kind === "calibration-source" || message.kind === "calibration-preview" || message.kind === "identity-suggest") {
+    const progress = message.kind === "identity-suggest" && message.identityDebug;
+    void runCalibrationCapture(message, progress ? (event) => {
+      if (process.connected) process.send?.(event);
+    } : void 0).then((result) => {
       if (process.connected) process.send?.(result);
     });
   }

@@ -2,14 +2,16 @@
 import { randomUUID } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import type { CuaFrame } from 'cortico-world-desktop-pet';
+import type { CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { runCalibrationCapture } from './calibration-capture.ts';
 import { Detector, detectionStatus, matchesCalibration } from './detector.ts';
 import { DELTA_DEFAULTS } from './config.ts';
-import { LootDetector, lootCaptureRoi, lootStatus } from './loot-detector.ts';
+import { copyPixelRect } from './image.ts';
+import { LootDetector, lootCaptureRoi, lootDetailPixels, lootStatus } from './loot-detector.ts';
 import { SharedOcr } from './shared-ocr.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS } from './limits.ts';
 import { startupCheck } from './startup-check.ts';
-import type { CalibrationWorkerRequest, ChildToMain, DeltaFrameSource, MainToChild } from './engine-ipc.ts';
+import { DELTA_ENGINE_VERSION, type CalibrationWorkerRequest, type ChildToMain, type DeltaFrameSource, type MainToChild } from './engine-ipc.ts';
 
 let active = false;
 let generation = 0;
@@ -37,7 +39,7 @@ async function stop(): Promise<void> {
 }
 
 async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<void> {
-  if (active || message.version !== 1) return;
+  if (active || message.version !== DELTA_ENGINE_VERSION) return;
   generation = message.generation;
   const { settings } = message; displayId = settings.displayId;
   const module = await import(settings.frameSourceModule) as { createFrameSource(): DeltaFrameSource | Promise<DeltaFrameSource> };
@@ -52,7 +54,8 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
   }, (language) => ocr!.open(language));
   lootDetector = new LootDetector(loot, () => source!.captureEvidence(displayId, lootCaptureRoi(loot.calibration!)), (evidence, match) => {
     if (active) send({ kind: 'event', generation, requestId: 0, id: randomUUID(), eventKind: 'loot', dedupKey: match.dedupKey, synthetic: false,
-      capture: evidence.capture, crop: evidence.crop, cropJpeg: evidence.cropJpeg, recognition: match.recognition, attribution: null, lootSignature: match.signature });
+      capture: evidence.capture, crop: evidence.crop, cropJpeg: evidence.cropJpeg, recognition: match.recognition, attribution: null, lootSignature: match.signature,
+      lootDetail: lootDetailPixels(evidence.region, match.box) });
   }, (language) => ocr!.open(language), settings.detection);
   active = true; send({ kind: 'ready', generation });
   const publish = () => send({ kind: 'heartbeat', generation, capturedAt: latest?.capturedAt ?? null, frame: latest, captures,
@@ -65,33 +68,55 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
     sampling = (async () => {
       try {
         const calibration = settings.detection.calibration;
-        // Read display geometry before applying any saved region to the selected source.
-        const region = await source!.captureRoi(displayId, { x: 0, y: 0, width: 0.000001, height: 0.000001 });
-        if (!active) return;
+        const detect = !!(settings.detection.enabled && calibration && !detector?.status.reason);
+        const lootReady = !!(loot.enabled && loot.calibration && !lootDetector?.status.reason);
+        const lootDue = lootReady && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS;
+        const rois = detect ? [calibration.roi, ...(calibration.personalFeedbackRoi ? [calibration.personalFeedbackRoi] : [])] : [];
+        if (lootDue && loot.calibration) rois.push(loot.calibration.itemsRoi);
+        // No saved region needs pixels; the probe still publishes display geometry.
+        if (!rois.length) rois.push({ x: 0, y: 0, width: 0.000001, height: 0.000001 });
+        const regions: CapturedRegion[] = [];
+        if (rois.length > 1 && source!.captureRois) {
+          regions.push(...await source!.captureRois(displayId, rois));
+          if (!active) return;
+          if (regions.length !== rois.length) throw Object.assign(new Error('Incomplete capture'), { code: 'captureFailed' });
+          captures += regions.length;
+        } else for (const roi of rois) {
+          regions.push(await source!.captureRoi(displayId, roi));
+          if (!active) return;
+          captures++;
+        }
+        const region = regions[0]!;
         const bounds = region.display.bounds, scale = Math.min(1, 1280 / bounds.width, 800 / bounds.height);
         const width = Math.max(1, Math.round(bounds.width * scale)), height = Math.max(1, Math.round(bounds.height * scale));
         latest = { frameId: randomUUID(), capturedAt: region.capturedAt, display: region.display, topologyRevision: region.topologyRevision,
           width, height, mime: 'image/jpeg', transform: { originX: bounds.x, originY: bounds.y, scaleX: width / bounds.width, scaleY: height / bounds.height } };
-        captures++;
-        let sampledSource = region;
+        let cursor = 0, sampledSource = region;
         const checks = startupCheck(latest, settings.detection, loot);
-        if (checks.detection.status === 'compatible' && !detector?.status.reason && calibration) {
-          const feed = await source!.captureRoi(displayId, calibration.roi);
-          if (!active) return;
-          captures++; sampledSource = feed;
-          if (calibration.personalFeedbackRoi && matchesCalibration(feed, calibration)) {
-            const personal = await source!.captureRoi(displayId, calibration.personalFeedbackRoi);
-            if (!active) return;
-            captures++; sampledSource = personal; detector?.submit(personal);
-          } else detector?.submit(feed);
-        } else if (checks.detection.status === 'invalid') detector?.submit(region);
-        const lootSourceMatches = !!loot.calibration && matchesCalibration(sampledSource, { ...loot.calibration, roi: loot.calibration.itemsRoi });
+        if (detect && calibration) {
+          const feed = regions[cursor++]!;
+          // Pixels from this snapshot are submitted only when they still match the saved calibration.
+          if (checks.detection.status === 'compatible') {
+            sampledSource = feed;
+            if (calibration.personalFeedbackRoi && matchesCalibration(feed, calibration)) {
+              sampledSource = regions[cursor++]!; detector?.submit(sampledSource);
+            } else {
+              if (calibration.personalFeedbackRoi) cursor++;
+              detector?.submit(feed);
+            }
+          } else {
+            if (calibration.personalFeedbackRoi) cursor++;
+            if (checks.detection.status === 'invalid') detector?.submit(feed);
+          }
+        } else if (checks.detection.status === 'invalid') detector?.submit(sampledSource);
+        const lootCalibration = loot.calibration;
+        const lootSourceMatches = !!lootCalibration && matchesCalibration(sampledSource, { ...lootCalibration, roi: lootCalibration.itemsRoi });
         if (checks.loot.status === 'invalid' || loot.enabled && !lootSourceMatches) lootDetector?.submit(sampledSource);
-        if (checks.loot.status === 'compatible' && loot.calibration && lootSourceMatches && !lootDetector?.status.reason && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
-          lastLootAtMs = Date.now();
-          const items = await source!.captureRoi(displayId, loot.calibration.itemsRoi);
+        if (lootReady && lootCalibration && checks.loot.status === 'compatible' && lootSourceMatches && Date.now() - lastLootAtMs >= DELTA_LOOT_SAMPLE_INTERVAL_MS) {
+          const items = lootDue ? regions[cursor++]! : await source!.captureRoi(displayId, lootCalibration.itemsRoi);
+          if (!lootDue) captures++;
           if (!active) return;
-          captures++; lootDetector?.submit(items);
+          lastLootAtMs = Date.now(); lootDetector?.submit(items);
         }
         publish();
         captureTimer = setTimeout(sample, settings.captureIntervalMs);
@@ -99,8 +124,15 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
         if (!active) return;
         latest = null;
         lootDetector?.clearVisible();
-        send({ kind: 'error', generation, reason: 'source-unavailable', message: String(err) });
-        captureTimer = setTimeout(sample, Math.max(1000, settings.captureIntervalMs));
+        const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+        if (code === 'captureTransportFailed' || code === 'captureFailed') {
+          active = false;
+          if (heartbeat) clearInterval(heartbeat);
+          send({ kind: 'error', generation, reason: 'worker-failed', message: String(err) });
+        } else {
+          send({ kind: 'error', generation, reason: 'source-unavailable', message: String(err) });
+          captureTimer = setTimeout(sample, Math.max(1000, settings.captureIntervalMs));
+        }
       }
     })();
   };
@@ -116,11 +148,8 @@ function simulate(message: Extract<MainToChild, { kind: 'simulate' }>): void {
     rgba[i] = color[0]! + x % 30; rgba[i + 1] = color[1]! + y % 30; rgba[i + 2] = color[2]!; rgba[i + 3] = 255;
   }
   const full = jpeg.encode({ data: rgba, width, height }, 90).data, decoded = jpeg.decode(full, { useTArray: true });
-  const crop = { x: 64, y: 0, width: 64, height: 40 }, cropped = Buffer.alloc(crop.width * crop.height * 4);
-  for (let y = 0; y < crop.height; y++) {
-    const start = ((crop.y + y) * width + crop.x) * 4;
-    cropped.set(decoded.data.subarray(start, start + crop.width * 4), y * crop.width * 4);
-  }
+  const crop = { x: 64, y: 0, width: 64, height: 40 };
+  const cropped = copyPixelRect(decoded.data, width, crop.x, crop.y, crop.width, crop.height);
   const display = latest.display;
   send({ kind: 'event', generation, requestId: message.requestId, id: message.eventId, eventKind: message.eventKind, dedupKey: message.dedupKey, synthetic: true, recognition: null,
     capture: { jpeg: full, frame: { ...latest, frameId: randomUUID(), capturedAt: new Date().toISOString(), width, height,
@@ -132,12 +161,15 @@ process.on('message', (message: MainToChild | CalibrationWorkerRequest) => {
   if (message.kind === 'start') void start(message).catch((err) => send({ kind: 'error', generation, reason: 'worker-failed', message: String(err) }));
   else if (message.kind === 'stop') void stop().finally(() => process.exit(0));
   else if (message.kind === 'simulate') simulate(message);
-  else if (message.kind === 'preview' && active) {
+  else if (message.kind === 'preview' && !active) send({ kind: 'preview', generation, requestId: message.requestId, capture: null });
+  else if (message.kind === 'preview') {
     void source!.capture(displayId).then((capture) => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture }); })
       .catch(() => { if (active) send({ kind: 'preview', generation, requestId: message.requestId, capture: null }); });
   }
-  else if (message.kind === 'calibration-suggest' || message.kind === 'calibration-source') {
-    void runCalibrationCapture(message).then((result) => { if (process.connected) process.send?.(result); });
+  else if (message.kind === 'calibration-suggest' || message.kind === 'calibration-source' || message.kind === 'calibration-preview' || message.kind === 'identity-suggest') {
+    const progress = message.kind === 'identity-suggest' && message.identityDebug;
+    void runCalibrationCapture(message, progress ? event => { if (process.connected) process.send?.(event); } : undefined)
+      .then((result) => { if (process.connected) process.send?.(result); });
   }
 });
 process.on('disconnect', () => { void stop().finally(() => process.exit(0)); });
