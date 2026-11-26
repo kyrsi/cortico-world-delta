@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Задержка восстановления",
   maxRestarts: "Попытки автоматического восстановления",
   detectionEnabled: "Распознавать убийства и нокдауны",
-  detectionNickname: "Игровой ник",
+  detectionNickname: "Игровой ник (необязательно)",
   detectionLanguage: "Язык игры",
   lootEnabled: "Распознавать предметы красного качества",
   lootLanguage: "Язык интерфейса предметов",

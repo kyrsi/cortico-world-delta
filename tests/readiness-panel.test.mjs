@@ -28,7 +28,7 @@ const combatArea = { ...source, roi };
 const lootAreas = { ...source, itemsRoi: roi, contextRoi: { ...roi, y: .05 } };
 const D = detectionText('zh'), L = lootText('zh'), C = startupText('zh');
 
-async function panel(t, { detection = {}, loot = {}, permitted = true, language = 'zh', standalone = false } = {}) {
+async function panel(t, { detection = {}, loot = {}, permitted = true, language = 'zh', standalone = false, suggestionStatus = 'ready', saveFails = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'delta-readiness-'));
   const path = join(directory, 'config.json'), cfg = structuredClone(DELTA_DEFAULTS);
   cfg.enabled = true;
@@ -44,9 +44,9 @@ async function panel(t, { detection = {}, loot = {}, permitted = true, language 
     transform: { originX: 0, originY: 0, scaleX: 64 / display.bounds.width, scaleY: 36 / display.bounds.height } };
   const calibrationOperation = async request => {
     calibrationCalls.push(request.kind);
-    if (request.kind === 'calibration-source') return { status: 'source', source };
+    if (request.kind === 'calibration-source') { if (saveFails) throw new Error('source probe failed'); return { status: 'source', source }; }
     if (request.kind === 'identity-suggest') return { status: 'identity', suggestion: { status: 'candidate', nickname: 'FixturePlayer' } };
-    return { status: 'ready', capture: { frame, jpeg: jpeg.encode({ width: frame.width, height: frame.height,
+    return { status: suggestionStatus, capture: { frame, jpeg: jpeg.encode({ width: frame.width, height: frame.height,
       data: Buffer.alloc(4 * frame.width * frame.height, 200) }).data } };
   };
   const adapter = standalone ? { standalone: { frameSourceModule, listDisplays: async () => [display] } } : { binding };
@@ -186,7 +186,7 @@ test('only the explicit manual link opens detailed settings and Back returns to 
   const p = await panel(t);
   await p.click(play);
   assert.ok(!p.el(wizard).hidden);
-  assert.deepEqual(p.channel('detection').missing(), [D.nickname, D.language, C.combat]);
+  assert.deepEqual(p.channel('detection').missing(), [D.language, C.combat]);
   for (const key of ['detection', 'loot']) {
     assert.equal(p.channel(key).settings.open, false);
     const disclosure = p.el(manual(key)).closest('details');
@@ -200,25 +200,27 @@ test('only the explicit manual link opens detailed settings and Back returns to 
   assert.deepEqual(p.calibrationCalls, []);
 });
 
-test('nickname entry and confirmed calibration clear the requirements without starting observation', async t => {
+test('calibration auto-saves without a nickname, keeps the screenshot, and changes setup to play', async t => {
   const p = await panel(t, { detection: { language: 'zh-CN' }, loot: { language: 'zh-CN' } });
   await p.click(play);
-  await p.click(jump('nickname'));
-  await p.edit('.delta-identity-field input', 'FixturePlayer');
-  await p.click('[data-identity-action="save"]');
+  assert.equal(p.el(play).dataset.mode, 'setup');
+  assert.equal(p.document.querySelector('[data-identity-action="suggest"]'), null);
   assert.deepEqual(p.channel('detection').missing(), [C.combat]);
   await p.click(jump('combatRegions'));
   assert.deepEqual(p.calibrationCalls, []);
-  const capture = '[data-calibration-action="suggest"]', save = '[data-calibration-action="apply"]';
+  const capture = '[data-calibration-action="suggest"]';
   await p.click(capture);
-  await waitUntil(() => !p.el(save).disabled && !p.el(save).hidden, () => JSON.stringify({ status: p.el('[data-calibration-status]').dataset.calibrationStatus, requests: p.requests, worker: p.calibrationCalls }));
-  await p.click(save);
+  await waitUntil(() => p.el('[data-calibration-status]').dataset.calibrationStatus === 'saved');
+  assert.equal(p.document.querySelector('[data-calibration-action="apply"]'), null);
+  assert.equal(p.el('.delta-quick-preview').hidden, false);
+  assert.ok(p.el('.delta-quick-preview img').src.startsWith('blob:'));
+  assert.equal(p.el(play).dataset.mode, 'start');
   assert.deepEqual(p.channel('detection').missing(), []);
   assert.deepEqual(p.channel('loot').missing(), []);
   assert.deepEqual(p.calibrationCalls, ['calibration-suggest', 'calibration-source']);
   assert.equal(p.requests.includes('start'), false);
   const cfg = await p.readCfg();
-  assert.equal(cfg.detection.nickname, 'FixturePlayer');
+  assert.equal(cfg.detection.nickname, '');
   assert.ok(cfg.detection.calibration?.roi && cfg.loot.calibration?.itemsRoi);
 });
 
@@ -314,5 +316,32 @@ test('changing resolution on the same standalone display returns to area calibra
   assert.equal(p.el(jump('lootRegions')).closest('[hidden]'), null);
   assert.equal(p.requests.includes('startStandalone'), false);
   assert.equal(p.requests.includes('prepareCalibration'), false);
+  assert.deepEqual(p.calibrationCalls, []);
+});
+for (const [name, options, expected] of [
+  ['unrecognized scene', { suggestionStatus: 'scene-unrecognized' }, 'scene-unrecognized'],
+  ['save failure', { saveFails: true }, 'save-failed'],
+]) test(name + ' retains a screenshot and offers manual configuration without overwriting settings', async t => {
+  const p = await panel(t, { detection: { language: 'zh-CN' }, loot: { language: 'zh-CN' }, ...options });
+  await p.click(play);
+  await p.click('[data-calibration-action="suggest"]');
+  await waitUntil(() => p.el('[data-calibration-status]').dataset.calibrationStatus === expected);
+  assert.equal(p.el('.delta-quick-preview').hidden, false);
+  assert.ok(p.el('[data-calibration-status]').classList.contains('bad'));
+  assert.equal(p.el(play).dataset.mode, 'setup');
+  assert.equal((await p.readCfg()).detection.calibration, null);
+  await p.click('[data-calibration-action="manual"]');
+  assert.ok(p.el('[data-setup-back]').closest('[hidden]') === null);
+});
+
+test('optional nickname can be saved and cleared without capture authorization', async t => {
+  const p = await panel(t, { detection: { language: 'zh-CN', calibration: combatArea }, loot: { enabled: false }, permitted: false });
+  await p.click('[data-open-setup]');
+  for (const name of ['FixturePlayer', '']) {
+    await p.edit('.delta-identity-field input', name);
+    await p.click('[data-identity-action="save"]');
+    assert.equal((await p.readCfg()).detection.nickname, name);
+    assert.deepEqual(p.channel('detection').missing(), []);
+  }
   assert.deepEqual(p.calibrationCalls, []);
 });

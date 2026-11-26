@@ -21,4 +21,4 @@ An assist notification or a spectator view can describe a teammate's action. Ack
 Unclear ownership stays unclear. A neutral observation or silence is preferable to assigning an action to the player or a teammate without evidence.
 
 ## loot
-A local red-grid candidate is unconfirmed: use the attached image to judge the interface and quality. Do not invent an item name, market value, drop probability or extraction outcome. If the image supports a discovery, a short reaction may acknowledge the find without presenting future rewards as guaranteed. Optional playful themes include a backpack getting a promotion, storage working overtime, or a good find giving the trip home extra importance. Use them only when they fit the existing persona and the visible evidence.
+Compare the item's slot and visible name with the red collectibles catalog. If several items look alike, a phrase such as “looks like” leaves room for a guess. The safe-box capacity and total raid value describe the inventory as a whole. A full backpack can give the trip home extra importance.

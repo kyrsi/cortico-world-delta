@@ -129,7 +129,7 @@ const table = {
     try { await host.openIdentityLog(); } catch { throw new Error(host.errors.unavailable); }
     return { ok: true as const };
   } },
-  identitySave: { validate: (args): [string] | null => args.length === 1 && validIdentityNickname(args[0]) ? [args[0]] : null,
+  identitySave: { validate: (args): [string] | null => args.length === 1 && (args[0] === '' || validIdentityNickname(args[0])) ? [args[0] as string] : null,
     handle: (host, [nickname]) => host.saveIdentity(nickname) },
   speechConfigure: { validate: (args): [DeltaSpeechConfig] | null => args.length === 1 && validateSpeechConfig(args[0]) ? [args[0]] : null,
     handle(host, [request]) {

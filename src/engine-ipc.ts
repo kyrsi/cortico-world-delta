@@ -59,6 +59,7 @@ export type ChildToMain = { kind: 'ready'; generation: number }
       attribution?: DeltaAttribution | null;
       personalSignature?: PersonalSignature | null;
       lootSignature?: Uint8Array;
+      lootDetail?: Pick<CapturedRegion, 'width' | 'height' | 'bgra'>;
       /** crop uses full JPEG pixel coordinates. */
       capture: DeltaCapture; crop: { x: number; y: number; width: number; height: number }; cropJpeg: Uint8Array }
   | { kind: 'error'; generation: number; reason: 'source-unavailable' | 'worker-failed'; message: string };

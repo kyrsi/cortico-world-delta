@@ -12,7 +12,7 @@ const zh = {
   restartDelayMs: "恢复等待",
   maxRestarts: "自动恢复次数",
   detectionEnabled: "启用击杀与击倒识别",
-  detectionNickname: "游戏昵称",
+  detectionNickname: "游戏昵称（可选）",
   detectionLanguage: "游戏语言",
   lootEnabled: "启用红色品质物品识别",
   lootLanguage: "物品界面语言",

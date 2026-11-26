@@ -21,6 +21,12 @@
 .delta-settings [data-observer-play][data-mode='pause']::before {
   clip-path: none; background: linear-gradient(90deg,currentColor 0 35%,transparent 35% 65%,currentColor 65%);
 }
+.delta-settings [data-observer-play][data-mode='setup']::before {
+  content: '!'; clip-path: none; background: #f8d66d; color: #332700;
+  width: 1.2em; height: 1.2em; border-radius: 50%; line-height: 1.2; text-align: center;
+  box-shadow: 0 0 0 1px #8b6919; font-weight: 800;
+}
+.delta-quick-status.bad::before { content: '!'; display: inline-block; border: 1px solid currentColor; border-radius: 50%; width: 1.25em; margin-inline-end: .5em; text-align: center; }
 .delta-setup { margin: 0 var(--delta-section-pad) var(--delta-section-pad); padding-top: 14px; border-top: 1px solid var(--delta-border); }
 .delta-setup-header, .delta-setup-checklist li, .delta-setup-basics { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
 .delta-setup-header { justify-content: space-between; }

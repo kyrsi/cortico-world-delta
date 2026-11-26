@@ -3,6 +3,7 @@ import type { WorldDefinition } from 'cortico/world.ts';
 import { DELTA_DEFAULTS, deltaConfigOptions, type DeltaConfigSection } from './config.ts';
 import { deltaText } from './i18n/index.ts';
 import { DeltaWorld, type DeltaWorldOptions } from './world.ts';
+import { lootToolDescriptions } from './loot-tools.ts';
 
 export interface DeltaAssembly extends Pick<DeltaWorldOptions, 'binding' | 'standalone' | 'frameSourceModule' | 'modelLanguage' | 'calibrationOperation' | 'screenshotReveal' | 'random'> {
   language?(): Language;
@@ -10,7 +11,7 @@ export interface DeltaAssembly extends Pick<DeltaWorldOptions, 'binding' | 'stan
 }
 export function deltaDefinition(assembly: DeltaAssembly = {}): WorldDefinition<DeltaConfigSection> {
   return { id: 'delta', get label() { return deltaText(assembly.language?.()).title; },
-    describe: { tools: [], events: [{ type: 'delta.observation', trigger: 'debounce',
+    describe: { tools: lootToolDescriptions, events: [{ type: 'delta.observation', trigger: 'debounce',
       description: { zh: '校准区域的观察结果及同帧完整截图与裁图', en: 'Observations from calibrated regions with full and cropped images from one frame' } }] },
     defaults: () => structuredClone(DELTA_DEFAULTS), configOptions: deltaConfigOptions, create: (ctx) => {
       const world = new DeltaWorld({ ...assembly, cfg: ctx.cfg, dataDir: ctx.dataDir, persist: (patch) => ctx.persist(patch) });

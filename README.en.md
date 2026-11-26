@@ -5,7 +5,7 @@
 <h1 align="center">Game observer</h1>
 <p align="center">Let Coo check kill notifications and the safe box in Delta Force at regular intervals.</p>
 <p align="center"><a href="README.md" lang="zh-CN">简体中文</a> · English</p>
-<p align="center"><code>1.1.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
+<p align="center"><code>1.3.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
 
 Game observer watches the monitor you select, reads combat notifications with Windows OCR and looks for red-tier loot candidates in inventory and container grids. Coo can react to an event with its screenshot and your own game notes. Your pet can stay on one monitor while you play on another.
 
@@ -16,21 +16,28 @@ Game observer watches the monitor you select, reads combat notifications with Wi
 
 ## Install
 
-1. Open **World extensions → Extension market** in Coopanion. Search for **Game observer** or `cortico-world-delta` and add it to **My Worlds**.
-2. Restart when prompted, activate **Game observer** under **My Worlds** and open the observer panel.
+The Git version is 1.3.0 and has not been published to npm. Public version 1.2.0 has been withdrawn; use the local installation steps below.
 
-While the market index updates, you can install `cortico-world-delta@1.1.0` in advanced mode under **Extensions → Install from npm**. For offline installation, extract the matching release package and use **Install from local directory**. Select the folder containing `package.json`, `describe.json` and `dist`, and keep it in place.
+1. Extract the local trial package and use advanced mode **Extensions → Install from local directory**. Select the folder containing `package.json`, `describe.json` and `dist`, and keep it in place. Run `npm run build` first when installing from source.
+2. Restart when prompted, activate **Game observer** under **My Worlds** and open the observer panel.
 
 ## First raid
 
-1. Click **▶ Start observation** at the top of the observer panel. The control stays visible as you scroll. For a new setup, select **Quick setup** beside a missing item, choose combat or loot detection, and save the game language. When ready, press play, choose the game monitor and grant access. The customized host requires game observation to be enabled in its computer-use settings. Continuous observation requires a model that accepts images. Keyboard and mouse control can stay off.
-2. Set the in-game aspect ratio under observation and calibration. The default is **16:10**. Open your own player profile and use ID calibration to locate the card in the lower right. If the text is unclear, the plugin enlarges the relevant part of the same screenshot and reads it again. Check the full name before clicking **Save ID**. You can also enter the name from the kill feed under player identification.
-3. Click **One-click calibration** and switch to the Chinese solo or squad preparation screen within three seconds. Review the estimated regions and confirm within 60 seconds. For the loot region, repeat with the safe-box title and full grid visible. On Windows, you can also press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd> in game when the panel shows the shortcut is registered.
-4. If the suggested regions need adjustment, open detailed settings, make the change and return to quick setup. Saved settings carry over to the next session. Use the pause control to end capture. Recent events show recognition and delivery results. Combat detection ignores settings captions such as the Chinese heading for kill and knockdown recognition. Chinese OCR requires the Windows Chinese language pack. Calibration has been replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified.
+1. **Click Start observation.** A yellow exclamation means configuration is incomplete. Clicking opens Quick setup. Choose combat or loot detection and save the game language. Missing-item shortcuts stay in Quick setup; open detailed settings when manual changes are needed.
+2. **Choose the game display and aspect ratio.** The default is **16:10**. Grant access, open the Chinese solo or squad preparation screen, click One-click calibration and return to the game within three seconds. Successful calibration saves automatically and retains its screenshot, timestamp and region overlays. The registered <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd> shortcut also saves without an open panel.
+3. **Capture again when needed.** Preparation-screen regions are estimates. For a measured safe-box region, show its title and complete borders in the inventory. Failures show a red exclamation and a shortcut to manual settings, retaining the available screenshot. Successful previews remain in the current panel; right-click export is still limited by server preview expiry.
+4. **The nickname is optional.** Player identification offers manual entry and save. Automatic ID calibration has been removed from the panel. Personal notifications establish the player’s action, while assists and spectating retain teammate attribution. The optional nickname helps check the upper-right feed. An unmatched target is not automatically an AI soldier.
+5. **Press play when ready.** The yellow exclamation changes to play when configuration is complete, and to pause after starting. Starting again or restarting Core still requires screen permission. Pause or stop ends capture. Recent events show recognition and delivery results. Chinese notifications require Windows Chinese OCR, and observation requires an image-capable model.
 
-Under **Player identification**, choose **Show debug log** to find the record and full-resolution screenshot for an ID calibration. The folder keeps the three newest calibration screenshots. Once the log passes 1 MiB it is renamed to `attempts.1.jsonl` and a new log starts. Saving your ID successfully clears the remaining screenshots. [ID calibration troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
+Calibration has been replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified. Synthetic tests cover safe-box outer boundaries, capacity headings and red candidates in every slot for 1×2, 2×2 and 2×3; complete real-game footage for each size still needs validation. [Configuration and coverage notes (Chinese)](documents/observation-setup.md)
+
+Show debug log remains available only when historical ID logs exist. Saving a nickname clears retained historical ID frames. [Archived ID troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
 
 ## Reactions and game notes
+
+For loot candidates, Coo receives the game screen and the inventory crop from the same frame. It can check the slot’s rarity and look up reference pictures in the catalog. When the name is hard to read, it can request the original-resolution crop from that event, including any visible slot label. Coo identifies confirmed red loot as a red-quality Delta Force item and can qualify a guess about its name.
+
+Open the [item review table](documents/loot-catalog-review.html) in a browser to confirm or correct names against their pictures. Coo can use every listed item immediately. Review progress is saved in the current browser. To apply corrections to the extension, export the catalog, replace `knowledge/red-items.json`, and rebuild. Reference pictures load online.
 
 By default, eligible events have a 50% chance of waking Coo, with at least 45 seconds between ordinary game wakeups. Change the cooldown and eligible events in the panel. OCR runs locally. Event screenshots can reach the model provider configured in Coopanion when Coo responds.
 

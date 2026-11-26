@@ -31,7 +31,6 @@ interface QuickCalibrationContext {
   screenshots: ScreenshotMenu;
   suggest(signal: AbortSignal): Promise<DeltaCalibrationSuggestion>;
   image(frameId: string, signal: AbortSignal): Promise<Blob>;
-  apply(frameId: string, signal: AbortSignal): Promise<void>;
   setAspectRatio(ratio: DeltaGameAspectRatio): Promise<void>;
   dismiss(attemptId: string): Promise<void>;
   openManual(): void;
@@ -92,11 +91,9 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   manual.dataset.calibrationAction = 'manual';
   const cancel = ui.button(T.cancel, { size: 'sm', onClick: cancelAttempt });
   cancel.dataset.calibrationAction = 'cancel';
-  const save = ui.button(T.save, { size: 'sm', variant: 'primary', onClick: () => void apply() });
-  save.dataset.calibrationAction = 'apply';
   const actions = ui.rowbar();
   actions.classList.add('delta-quick-calibration-actions');
-  actions.append(cancel, save, manual);
+  actions.append(cancel, manual);
 
   const preview = ui.h('figure', 'delta-calibration delta-quick-preview');
   const captureCaption = ui.h('figcaption', 'delta-quick-capture delta-note');
@@ -159,7 +156,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     'unsupported-layout': T.unsupported, 'scene-unrecognized': T.unrecognized,
     'ocr-unavailable': T.ocrUnavailable, 'capture-unavailable': T.captureUnavailable,
     'source-changed': startup.reasons['display-changed'],
-    expired: T.expired, failed: T.failed,
+    expired: T.expired, failed: T.failed, 'save-failed': T.failed,
   };
 
   function canApply(): boolean { return stage === 'ready' || stage === 'inventory-ready'; }
@@ -173,16 +170,14 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     const running = stage === 'countdown' || stage === 'loading' || stage === 'saving';
     start.disabled = !allowed || blocked || ratioBusy || running;
     ratio.disabled = !captureSource || blocked || ratioBusy || running;
-    save.disabled = !canApply() || !allowed || blocked || ratioBusy;
-    save.hidden = !canApply() && stage !== 'saving';
     preview.hidden = !hasPreview;
-    cancel.hidden = !locked() && !hotkeyAttemptId && !hasPreview;
+    cancel.hidden = !running;
     cancel.disabled = stage === 'saving';
     manual.hidden = !failed && stage !== 'preparation-only';
     manual.disabled = blocked;
     enable.hidden = stage !== 'saved';
     attempt.hidden = stage === 'idle';
-    status.classList.toggle('bad', failed);
+    status.classList.toggle('bad', failed || stage === 'preparation-only');
     status.dataset.calibrationStatus = stage;
   }
   async function saveRatio(): Promise<void> {
@@ -305,8 +300,9 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
       previewUrl = URL.createObjectURL(blob);
       image.src = previewUrl;
       image.dataset.frameId = frame.frameId;
-      timer = setTimeout(expire, expiresAtMs - Date.now());
-      show(value.status, found ? value.status === 'preparation-only' ? T.preparationOnly : T.verify : failures[value.status]);
+      const saved = value.status === 'ready' || value.status === 'inventory-ready';
+      if (!saved) timer = setTimeout(expire, expiresAtMs - Date.now());
+      show(saved ? 'saved' : value.status, saved ? T.saved : value.status === 'preparation-only' ? T.preparationOnly : failures[value.status as Failure]);
     } catch {
       if (!requestSignal.aborted) finish('capture-unavailable');
     }
@@ -347,29 +343,13 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     forgetHotkeyAttempt(true);
     finish('expired');
   }
-  async function apply(): Promise<void> {
-    if (save.disabled || !previewFrameId || signal.aborted) return;
-    if (expiresAtMs <= Date.now()) { expire(); return; }
-    const frameId = previewFrameId;
-    clearTimeout(timer);
-    show('saving', T.saving);
-    try {
-      await ctx.apply(frameId, signal);
-      if (!signal.aborted) {
-        forgetHotkeyAttempt(false);
-        finish('saved');
-      }
-    } catch {
-      if (!signal.aborted) finish('failed');
-    }
-  }
 
   function syncHotkeyAttempt(hotkey: Hotkey): void {
     if (!allowed || blocked || ratioBusy || stage === 'saving' || signal.aborted) return;
     const next = hotkey?.attempt;
     if (hotkeyAttemptId && hotkeyAttemptId !== next?.id) {
       forgetHotkeyAttempt(false);
-      if (!next && (locked() || previewFrameId)) finish('expired');
+      if (!next && stage !== 'saved' && (locked() || previewFrameId)) finish('expired');
     }
     if (!next || next.id === ignoredHotkeyAttemptId) return;
     if (hotkeyAttemptId !== next.id) {

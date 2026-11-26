@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Espera de recuperación",
   maxRestarts: "Intentos de recuperación automática",
   detectionEnabled: "Reconocer eliminaciones y derribos",
-  detectionNickname: "Apodo en el juego",
+  detectionNickname: "Apodo (opcional)",
   detectionLanguage: "Idioma del juego",
   lootEnabled: "Reconocer objetos de calidad roja",
   lootLanguage: "Idioma de la interfaz de objetos",

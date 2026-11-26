@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "복구 대기 시간",
   maxRestarts: "자동 복구 횟수",
   detectionEnabled: "처치 및 다운 인식",
-  detectionNickname: "게임 닉네임",
+  detectionNickname: "게임 닉네임 (선택)",
   detectionLanguage: "게임 언어",
   lootEnabled: "빨간 등급 아이템 인식",
   lootLanguage: "아이템 화면 언어",

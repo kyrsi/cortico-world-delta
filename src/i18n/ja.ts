@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "復旧までの待ち時間",
   maxRestarts: "自動復旧の試行回数",
   detectionEnabled: "キルとダウンを認識",
-  detectionNickname: "ゲーム内の名前",
+  detectionNickname: "ゲーム内の名前（任意）",
   detectionLanguage: "ゲームの言語",
   lootEnabled: "赤品質アイテムを認識",
   lootLanguage: "アイテム画面の言語",

@@ -7,7 +7,7 @@ import { runCalibrationCapture } from './calibration-capture.ts';
 import { Detector, detectionStatus, matchesCalibration } from './detector.ts';
 import { DELTA_DEFAULTS } from './config.ts';
 import { copyPixelRect } from './image.ts';
-import { LootDetector, lootCaptureRoi, lootStatus } from './loot-detector.ts';
+import { LootDetector, lootCaptureRoi, lootDetailPixels, lootStatus } from './loot-detector.ts';
 import { SharedOcr } from './shared-ocr.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS } from './limits.ts';
 import { startupCheck } from './startup-check.ts';
@@ -54,7 +54,8 @@ async function start(message: Extract<MainToChild, { kind: 'start' }>): Promise<
   }, (language) => ocr!.open(language));
   lootDetector = new LootDetector(loot, () => source!.captureEvidence(displayId, lootCaptureRoi(loot.calibration!)), (evidence, match) => {
     if (active) send({ kind: 'event', generation, requestId: 0, id: randomUUID(), eventKind: 'loot', dedupKey: match.dedupKey, synthetic: false,
-      capture: evidence.capture, crop: evidence.crop, cropJpeg: evidence.cropJpeg, recognition: match.recognition, attribution: null, lootSignature: match.signature });
+      capture: evidence.capture, crop: evidence.crop, cropJpeg: evidence.cropJpeg, recognition: match.recognition, attribution: null, lootSignature: match.signature,
+      lootDetail: lootDetailPixels(evidence.region, match.box) });
   }, (language) => ocr!.open(language), settings.detection);
   active = true; send({ kind: 'ready', generation });
   const publish = () => send({ kind: 'heartbeat', generation, capturedAt: latest?.capturedAt ?? null, frame: latest, captures,

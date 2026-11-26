@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { attributePersonalFeedback, parsePersonalFeedback } from '../src/detector.ts';
+import { attributePersonalFeedback, parsePersonalFeedback, parseDetection, detectionStatus } from '../src/detector.ts';
 
 function layout(...rows) {
   return {
@@ -45,4 +45,15 @@ test('HUD actions keep unknown names, headshot modifiers and a separately displa
     const matches = attributePersonalFeedback(parsePersonalFeedback(input, 'Player'), [input]);
     assert.deepEqual(matches.map(m => [m.kind, m.recognition.target]), [[kind, target]]);
   }
+});
+
+test('personal ownership does not require a nickname; assists and spectator evidence retain their attribution', () => {
+  const input = layout({ text: '击败 Target' }, { text: '协助击败 Other', y: 45 });
+  const matches = parsePersonalFeedback(input, '');
+  assert.deepEqual(attributePersonalFeedback(matches, [input]).map(m => m.attribution.relation), ['self', 'teammate']);
+  assert.deepEqual(attributePersonalFeedback(matches, [input], 'other').map(m => m.attribution.relation), ['teammate', 'teammate']);
+  const feed = parseDetection(['Other killed Target'], '', 'en-US');
+  assert.equal(feed.attribution.relation, 'unknown');
+  assert.equal(parseDetection(['Other killed Target'], 'Player', 'en-US'), null);
+  assert.equal(detectionStatus({enabled:true, nickname:'', language:'zh-CN', calibration:null}).reason, 'calibration-required');
 });

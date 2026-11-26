@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { Language } from 'cortico/core/language.ts';
-import type { EventEnvelope, OutputTap, RunPhase, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
+import type { EventEnvelope, OutputTap, RunPhase, ToolDef, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
 import type { DeepPartial } from 'cortico/world.ts';
 import type { CuaDisplay, CuaFrame } from 'cortico-world-desktop-pet';
 import { CALIBRATION_PREVIEW_MS, calibrationRegions, sameCalibrationSource } from './calibration.ts';
@@ -14,6 +14,7 @@ import { detectionStatus, matchesCalibration } from './detector.ts';
 import { jpegSize } from './jpeg-size.ts';
 import { deltaText } from './i18n/index.ts';
 import { EventQueue } from './event-queue.ts';
+import { lootTools } from './loot-tools.ts';
 import { KnowledgeStore } from './knowledge-store.ts';
 import { IdentityDebugStore } from './identity-debug.ts';
 import { invokePanel, type DeltaPanelHost } from './panel-rpc.ts';
@@ -143,7 +144,10 @@ export class DeltaWorld implements World {
       relations: (['self', 'teammate', 'unknown'] as const).filter(relation => attribution[relation]) };
   }
   envPromptVars(): null { return null; }
-  tools(): [] { return []; }
+  tools(): ToolDef[] {
+    const acceptsPng = () => this.host?.modelFacts.accepts('image/png') === true;
+    return lootTools(acceptsPng, eventId => this.queue.inspectLoot(eventId, acceptsPng()));
+  }
   outputTap(): OutputTap {
     return { externalizes: () => false, onEvent: (event) => {
       if (event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta'
@@ -227,7 +231,7 @@ export class DeltaWorld implements World {
     }
     const snapshot = this.snapshot();
     const loot = this.lootConfig();
-    const calibrationKey = JSON.stringify([snapshot, cfg.enabled, cfg.detection.language, cfg.detection.calibration, loot.calibration, this.gameAspectRatio()]);
+    const calibrationKey = this.calibrationPolicySignature(snapshot);
     if (this.calibrationPolicyKey !== null && calibrationKey !== this.calibrationPolicyKey) this.clearCalibration();
     this.calibrationPolicyKey = calibrationKey;
     const key = JSON.stringify([snapshot, cfg.enabled, cfg.captureIntervalMs, cfg.worker, cfg.detection, loot]);
@@ -629,6 +633,10 @@ export class DeltaWorld implements World {
     record({ stage: 'finish', status: suggestion.status, reason, screenshot, elapsedMs: Date.now() - started });
     return { ...suggestion, attemptId, reason, screenshot };
   }
+  private calibrationPolicySignature(snapshot: CapturePolicy | null): string {
+    const cfg = this.options.cfg;
+    return JSON.stringify([snapshot, cfg.enabled, cfg.detection.language, cfg.detection.calibration, this.lootConfig().calibration, this.gameAspectRatio()]);
+  }
   private async calibrationSuggest(attemptId?: string): Promise<DeltaCalibrationSuggestion> {
     this.reconcile();
     const snapshot = this.calibrationPolicy();
@@ -654,7 +662,7 @@ export class DeltaWorld implements World {
         return structuredClone({ status: 'unsupported-layout', frame, expiresAt });
       }
       this.calibrationPreview.regions = { loot: structuredClone(result.loot) };
-      return structuredClone({ status: 'inventory-ready', frame, expiresAt, loot: result.loot, sources: { loot: 'detected' } });
+      return this.saveCalibrationSuggestion({ status: 'inventory-ready', frame, expiresAt, loot: result.loot, sources: { loot: 'detected' } });
     }
     if (result.status !== 'ready') return structuredClone({ status: result.status, frame, expiresAt });
     const regions = calibrationRegions(frame, this.gameAspectRatio(), this.options.cfg.detection.calibration, this.lootConfig().calibration, result.anchors);
@@ -663,7 +671,15 @@ export class DeltaWorld implements World {
     const combat = this.options.cfg.detection.language === 'en-US' ? { roi: regions.combat.roi, personalFeedbackRoi: null } : regions.combat;
     const suggestion = { ...regions, combat };
     this.calibrationPreview.regions = structuredClone(suggestion);
-    return structuredClone({ status: 'ready', frame, nickname: null, expiresAt, ...(result.anchors && { anchors: result.anchors }), ...suggestion });
+    return this.saveCalibrationSuggestion({ status: 'ready', frame, nickname: null, expiresAt, ...(result.anchors && { anchors: result.anchors }), ...suggestion });
+  }
+  private async saveCalibrationSuggestion(result: Extract<DeltaCalibrationSuggestion, { status: 'ready' | 'inventory-ready' }>): Promise<DeltaCalibrationSuggestion> {
+    try {
+      await this.calibrationApply({ frameId: result.frame.frameId }, 'invalid-calibration', 'calibration-unavailable', true);
+      return structuredClone(result);
+    } catch {
+      return { status: 'save-failed', frame: result.frame, expiresAt: result.expiresAt };
+    }
   }
   private validCalibrationPreview(frameId: unknown): CalibrationPreview | null {
     this.reconcile();
@@ -680,7 +696,7 @@ export class DeltaWorld implements World {
     if (this.phase !== 'running' || this.blocked(this.snapshot()) || !event || event.generation !== this.generation || event.status === 'dropped' || !images) return null;
     return { frame: event.frame, jpeg: images[part] };
   }
-  private async calibrationApply(request: DeltaCalibrationApplyRequest, invalidRequest: string, unavailable: string): Promise<DeltaState> {
+  private async calibrationApply(request: DeltaCalibrationApplyRequest, invalidRequest: string, unavailable: string, retainPreview = false): Promise<DeltaState> {
     const snapshot = this.calibrationPolicy(), preview = this.validCalibrationPreview(request.frameId);
     if (!snapshot || !preview?.regions || this.calibrationRequest) throw new Error(unavailable);
     const { regions } = preview;
@@ -689,7 +705,7 @@ export class DeltaWorld implements World {
     const result = await this.calibrationCapture('calibration-source', snapshot, preview.attemptId);
     const { frame } = preview.capture;
     if (result.status !== 'source' || !sameCalibrationSource(result.source, frame) || this.validCalibrationPreview(request.frameId) !== preview) {
-      if (this.calibrationPreview === preview) {
+      if (!retainPreview && this.calibrationPreview === preview) {
         this.calibrationPreview = null;
         if (preview.attemptId) this.clearCalibrationHotkeyAttempt();
       }
@@ -698,8 +714,11 @@ export class DeltaWorld implements World {
     const source = { display: frame.display, topologyRevision: frame.topologyRevision, gameAspectRatio: this.gameAspectRatio() };
     this.options.persist({ ...(regions.combat && { detection: { calibration: { ...source, ...regions.combat } } }),
       ...(regions.loot && { loot: { calibration: { ...source, ...regions.loot } } }) });
-    this.calibrationPreview = null;
-    if (preview.attemptId) this.clearCalibrationHotkeyAttempt();
+    if (retainPreview) this.calibrationPolicyKey = this.calibrationPolicySignature(this.snapshot());
+    if (!retainPreview) {
+      this.calibrationPreview = null;
+      if (preview.attemptId) this.clearCalibrationHotkeyAttempt();
+    }
     return this.state();
   }
   private panelHost(errors: DeltaPanelHost['errors']): DeltaPanelHost {

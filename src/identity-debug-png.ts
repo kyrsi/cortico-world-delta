@@ -11,7 +11,7 @@ function chunk(type: string, data: Buffer): Buffer {
 }
 
 /** Windows capture supplies BGR pixels with an unused alpha byte. */
-export function encodeIdentityFrame({ width, height, bgra }: CapturedRegion): Buffer {
+export function encodeIdentityFrame({ width, height, bgra }: Pick<CapturedRegion, 'width' | 'height' | 'bgra'>): Buffer {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width); header.writeUInt32BE(height, 4);
   header[8] = 8; header[9] = 2;

@@ -1,9 +1,10 @@
 /** Accept, dedup, expiry, and deferred delivery for one observation generation. */
 import { randomUUID } from 'node:crypto';
-import type { BlobInput, EventEnvelope } from 'cortico/core/types.ts';
+import type { BlobInput, EventEnvelope, ToolOutcome } from 'cortico/core/types.ts';
 import type { CuaFrame } from 'cortico-world-desktop-pet';
 import type { ChildToMain } from './engine-ipc.ts';
 import { jpegSize } from './jpeg-size.ts';
+import { encodeLootDetail } from './loot-tools.ts';
 import type { KnowledgeDocument } from './knowledge.ts';
 import { selectKnowledge } from './knowledge.ts';
 import { DELTA_MAX_HISTORY, DELTA_MAX_JPEG_BYTES } from './limits.ts';
@@ -14,6 +15,9 @@ import type { DeltaDetectionConfig, DeltaDropReason, DeltaEvent, DeltaKnowledgeS
 import { evaluateSpeech } from './speech.ts';
 
 interface Evidence { full: Uint8Array; crop: Uint8Array }
+type LootDetail = NonNullable<Extract<ChildToMain, {kind: 'event'}>['lootDetail']>;
+const LOOT_DETAIL_TTL_MS = 90_000;
+const LOOT_DETAIL_LIMIT = 4;
 interface Wake { generation: number; token: string }
 
 export interface EventQueueHost {
@@ -43,6 +47,7 @@ export class EventQueue {
   private pending: DeltaEvent[] = [];
   private readonly inflight = new Set<string>();
   private readonly images = new Map<string, Evidence>();
+  private readonly lootDetails = new Map<string, { pixels: LootDetail; frameId: string; delivered: boolean; expires: number }>();
   private readonly seen = new Map<string, number>();
   private readonly personalNotifications = new PersonalNotificationTracker();
   private readonly lootItems = new LootItemTracker();
@@ -56,6 +61,15 @@ export class EventQueue {
   pendingCount(): number { return this.pending.length; }
   imageCount(): number { return this.images.size; }
   stored(eventId: string): Evidence | undefined { return this.images.get(eventId); }
+  inspectLoot(eventId: string, acceptsPng: boolean): ToolOutcome {
+    this.host.reconcile();
+    const detail = this.lootDetails.get(eventId);
+    if (!detail?.delivered || detail.expires <= Date.now() || this.host.phase() !== 'running' || this.host.blocked()) {
+      return { text: 'The original item detail is unavailable. Use the attachments from that event.', failed: true };
+    }
+    return { text: `Native item slot and visible name area for event ${eventId}, frame ${detail.frameId}.`,
+      blobs: [{ ...encodeLootDetail(detail.pixels, acceptsPng), fallbackText: `Item slot and name area, frameId=${detail.frameId}` }] };
+  }
   selectedAtMs(): number | null { return this.lastSelectedAtMs; }
   activityAtMs(): number | null { return this.lastActivityAtMs; }
   noteActivity(now: number): void { this.lastActivityAtMs = now; }
@@ -65,7 +79,7 @@ export class EventQueue {
 
   clear(reason: DeltaDropReason, preserveDedup = false): void {
     for (const event of this.events) if (event.status === 'queued') this.drop(event, reason);
-    this.pending = []; this.images.clear(); this.inflight.clear();
+    this.pending = []; this.images.clear(); this.lootDetails.clear(); this.inflight.clear();
     if (!preserveDedup) { this.seen.clear(); this.personalNotifications.clear(); this.lootItems.clear(); }
   }
 
@@ -111,6 +125,10 @@ export class EventQueue {
       else {
         while (this.pending.length >= this.host.maxPending()) this.drop(this.pending.shift()!, 'overflow');
         this.images.set(event.id, { full: new Uint8Array(full), crop: new Uint8Array(message.cropJpeg) });
+        if (loot && message.lootDetail) {
+          if (this.lootDetails.size >= LOOT_DETAIL_LIMIT) this.lootDetails.delete(this.lootDetails.keys().next().value!);
+          this.lootDetails.set(event.id, { pixels: message.lootDetail, frameId: frame.frameId, delivered: false, expires: Date.parse(event.validUntil) });
+        }
         this.pending.push(event); this.scheduleWake();
       }
     }
@@ -119,6 +137,7 @@ export class EventQueue {
   }
 
   expire(now: number): void {
+    for (const [id, detail] of this.lootDetails) if (detail.expires <= now) this.lootDetails.delete(id);
     for (const event of this.events) if (Date.parse(event.validUntil) <= now) {
       if (event.status === 'queued') this.drop(event, 'expired');
       this.images.delete(event.id);
@@ -147,7 +166,11 @@ export class EventQueue {
       if (!batch.length) return null;
       if (batch.some(event => !event.synthetic)) this.lastSelectedAtMs = nowMs;
       meta.deltaEventIds = batch.map((event) => event.id);
-      for (const event of batch) this.inflight.add(event.id);
+      for (const event of batch) {
+        this.inflight.add(event.id);
+        const detail = this.lootDetails.get(event.id);
+        if (detail) { detail.delivered = true; detail.expires = nowMs + LOOT_DETAIL_TTL_MS; }
+      }
       const blobs: BlobInput[] = [];
       for (const event of batch) {
         const images = this.images.get(event.id)!;
@@ -156,7 +179,7 @@ export class EventQueue {
       const knowledge = this.host.knowledge();
       return { text: observationText(batch, this.host.modelLanguage(), {
         knowledge: selectKnowledge(knowledge, batch), source: this.host.knowledgeSource(), name: knowledge.name,
-        version: knowledge.version, style: config.style,
+        version: knowledge.version, style: config.style, nickname: this.host.detection().nickname,
       }), blobs };
     });
   }
@@ -172,7 +195,10 @@ export class EventQueue {
     }
   }
 
-  private drop(event: DeltaEvent, reason: DeltaDropReason): void { event.status = 'dropped'; event.dropReason = reason; this.images.delete(event.id); }
+  private drop(event: DeltaEvent, reason: DeltaDropReason): void {
+    event.status = 'dropped'; event.dropReason = reason;
+    this.images.delete(event.id); this.lootDetails.delete(event.id);
+  }
   private trimHistory(): void {
     const limit = Math.max(DELTA_MAX_HISTORY, this.host.maxPending());
     while (this.events.length > limit) {

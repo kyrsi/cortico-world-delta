@@ -223,3 +223,14 @@ test('loot detection scans again after a rejected OCR read', async () => {
   assert.ok(detector.status.scans >= 3);
   await detector.close();
 });
+
+test('the detector runs without a nickname and leaves actor-only ownership unconfirmed', async t => {
+  const confirmed = [], config = { ...combatConfig(), nickname: '' };
+  const detector = new Detector(config, async () => evidenceFor(frame(9)), (_evidence, match) => confirmed.push(match),
+    async () => port(async () => killLayout));
+  t.after(() => detector.close());
+  detector.submit(frame(8));
+  await until(() => confirmed.length === 1, 'optional nickname confirmation');
+  assert.equal(confirmed[0].attribution.relation, 'unknown');
+  assert.equal(detector.status.reason, null);
+});

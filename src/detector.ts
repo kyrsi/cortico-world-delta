@@ -21,17 +21,17 @@ export interface DetectionMatch {
 }
 export function parseDetection(lines: readonly string[], nickname: string, language: DeltaGameLanguage): DetectionMatch | null {
   const name = compactUpper(nickname);
-  if (!name || !language) return null;
+  if (!language) return null;
   const pattern = language === 'en-US' ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = new Map<string, DetectionMatch>();
   for (const text of lines) {
     const normalized = text.normalize('NFKC').trim(), match = pattern.exec(normalized);
-    if (!match || compactUpper(match[1]!) !== name) continue;
+    if (!match || (name && compactUpper(match[1]!) !== name)) continue;
     const target = compactUpper(match[3]!);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]!) || /击倒|击杀/u.test(match[3]!)) continue;
     const verb = compactUpper(match[2]!), kind = verb === 'KNOCKEDDOWN' || verb === '击倒' ? 'knockdown' : 'kill';
     const key = createHash('sha256').update(`${kind}:${name}:${target}`).digest('hex');
-    matches.set(key, { kind, text, dedupKey: key, attribution: { relation: 'self', basis: 'actor-text', assisted: false, spectating: false }, recognition: { kind: 'actor-text', text,
+    matches.set(key, { kind, text, dedupKey: key, attribution: { relation: name ? 'self' : 'unknown', basis: name ? 'actor-text' : 'unknown', assisted: false, spectating: false }, recognition: { kind: 'actor-text', text,
       actor: compact(match[1]!), target: compact(match[3]!) } });
   }
   return matches.size === 1 ? [...matches.values()][0]! : null;
@@ -93,7 +93,7 @@ export function attributePersonalFeedback(matches: readonly DetectionMatch[], la
 }
 
 export function parsePersonalFeedback(layout: DeltaOcrLayout, nickname: string): DetectionMatch[] {
-  if (layout.truncated || !nickname.trim()) return [];
+  if (layout.truncated) return [];
   const matches = new Map<string, DetectionMatch>();
   for (const { row, text, normalized, action, assisted, settingsLabel } of personalFeedbackRows(layout)) {
     if (!action || settingsLabel) continue;
@@ -129,7 +129,7 @@ export function matchesCalibration(region: Pick<CapturedRegion, 'display' | 'top
 
 export function detectionStatus(config: DeltaDetectionConfig): Omit<DeltaDetectionState, 'config'> {
   const calibration = config.calibration;
-  const reason = !config.nickname.trim() ? 'nickname-required' : !config.language ? 'language-required' : !calibration ? 'calibration-required'
+  const reason = !config.language ? 'language-required' : !calibration ? 'calibration-required'
     : !calibrationFitsBudget(calibration) ? 'roi-too-large' : calibration.personalFeedbackRoi && config.language !== 'zh-CN' ? 'feedback-language-unsupported' : null;
   return { phase: !config.enabled ? 'disabled' : reason === 'feedback-language-unsupported' ? 'unavailable' : reason ? 'uncalibrated' : 'starting', reason: config.enabled ? reason : null,
     engine: null, availableLanguages: [], scans: 0, candidates: 0, confirmed: 0, lastError: null };
@@ -161,7 +161,7 @@ export class Detector {
     this.status = detectionStatus(config);
   }
   submit(region: CapturedRegion): void {
-    if (this.closed || !this.config.enabled || !this.config.nickname.trim() || !this.config.language || !this.config.calibration || this.status.reason === 'roi-too-large'
+    if (this.closed || !this.config.enabled || !this.config.language || !this.config.calibration || this.status.reason === 'roi-too-large'
       || this.status.reason === 'feedback-language-unsupported') return;
     if (!matchesCalibration(region, this.config.calibration)) {
       this.status.phase = 'uncalibrated'; this.status.reason = 'source-changed'; this.pending = null; this.previous = null;

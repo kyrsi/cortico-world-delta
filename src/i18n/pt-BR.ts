@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Espera de recuperação",
   maxRestarts: "Tentativas de recuperação automática",
   detectionEnabled: "Reconhecer eliminações e derrubadas",
-  detectionNickname: "Apelido no jogo",
+  detectionNickname: "Apelido (opcional)",
   detectionLanguage: "Idioma do jogo",
   lootEnabled: "Reconhecer itens de qualidade vermelha",
   lootLanguage: "Idioma da interface de itens",

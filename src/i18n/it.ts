@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Attesa prima del ripristino",
   maxRestarts: "Tentativi di ripristino automatico",
   detectionEnabled: "Riconosci eliminazioni e atterramenti",
-  detectionNickname: "Nome nel gioco",
+  detectionNickname: "Nome nel gioco (facoltativo)",
   detectionLanguage: "Lingua del gioco",
   lootEnabled: "Riconosci oggetti di qualità rossa",
   lootLanguage: "Lingua dell’interfaccia oggetti",

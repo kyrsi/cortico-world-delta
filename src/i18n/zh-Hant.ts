@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "恢復等待",
   maxRestarts: "自動恢復次數",
   detectionEnabled: "啟用擊殺與擊倒辨識",
-  detectionNickname: "遊戲暱稱",
+  detectionNickname: "遊戲暱稱（選填）",
   detectionLanguage: "遊戲語言",
   lootEnabled: "啟用紅色品質物品辨識",
   lootLanguage: "物品介面語言",

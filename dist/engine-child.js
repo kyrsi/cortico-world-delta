@@ -2782,17 +2782,17 @@ function parsePersonalAttribution(layout, nickname, spectatorFrame = false) {
 // src/detector.ts
 function parseDetection(lines, nickname, language) {
   const name = compactUpper(nickname);
-  if (!name || !language) return null;
+  if (!language) return null;
   const pattern = language === "en-US" ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = /* @__PURE__ */ new Map();
   for (const text of lines) {
     const normalized2 = text.normalize("NFKC").trim(), match = pattern.exec(normalized2);
-    if (!match || compactUpper(match[1]) !== name) continue;
+    if (!match || name && compactUpper(match[1]) !== name) continue;
     const target = compactUpper(match[3]);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]) || /击倒|击杀/u.test(match[3])) continue;
     const verb = compactUpper(match[2]), kind = verb === "KNOCKEDDOWN" || verb === "\u51FB\u5012" ? "knockdown" : "kill";
     const key = createHash("sha256").update(`${kind}:${name}:${target}`).digest("hex");
-    matches.set(key, { kind, text, dedupKey: key, attribution: { relation: "self", basis: "actor-text", assisted: false, spectating: false }, recognition: {
+    matches.set(key, { kind, text, dedupKey: key, attribution: { relation: name ? "self" : "unknown", basis: name ? "actor-text" : "unknown", assisted: false, spectating: false }, recognition: {
       kind: "actor-text",
       text,
       actor: compact(match[1]),
@@ -2849,7 +2849,7 @@ function attributePersonalFeedback(matches, layouts, view = "own") {
   });
 }
 function parsePersonalFeedback(layout, nickname) {
-  if (layout.truncated || !nickname.trim()) return [];
+  if (layout.truncated) return [];
   const matches = /* @__PURE__ */ new Map();
   for (const { row, text, normalized: normalized2, action, assisted, settingsLabel } of personalFeedbackRows(layout)) {
     if (!action || settingsLabel) continue;
@@ -2889,7 +2889,7 @@ function matchesCalibration(region, calibration) {
 }
 function detectionStatus(config) {
   const calibration = config.calibration;
-  const reason = !config.nickname.trim() ? "nickname-required" : !config.language ? "language-required" : !calibration ? "calibration-required" : !calibrationFitsBudget(calibration) ? "roi-too-large" : calibration.personalFeedbackRoi && config.language !== "zh-CN" ? "feedback-language-unsupported" : null;
+  const reason = !config.language ? "language-required" : !calibration ? "calibration-required" : !calibrationFitsBudget(calibration) ? "roi-too-large" : calibration.personalFeedbackRoi && config.language !== "zh-CN" ? "feedback-language-unsupported" : null;
   return {
     phase: !config.enabled ? "disabled" : reason === "feedback-language-unsupported" ? "unavailable" : reason ? "uncalibrated" : "starting",
     reason: config.enabled ? reason : null,
@@ -2934,7 +2934,7 @@ var Detector = class {
   inflight = null;
   backoffCancel = null;
   submit(region) {
-    if (this.closed || !this.config.enabled || !this.config.nickname.trim() || !this.config.language || !this.config.calibration || this.status.reason === "roi-too-large" || this.status.reason === "feedback-language-unsupported") return;
+    if (this.closed || !this.config.enabled || !this.config.language || !this.config.calibration || this.status.reason === "roi-too-large" || this.status.reason === "feedback-language-unsupported") return;
     if (!matchesCalibration(region, this.config.calibration)) {
       this.status.phase = "uncalibrated";
       this.status.reason = "source-changed";
@@ -3144,6 +3144,13 @@ function copyPixelRect(source2, sourceWidth, x, y, width, height) {
 }
 
 // src/loot-detector.ts
+function lootDetailPixels(region, box) {
+  const margin = Math.max(2, Math.round(box.height * 0.08));
+  const x = Math.max(0, box.x - margin), y = Math.max(0, box.y - margin);
+  const width = Math.min(640, region.width - x, box.x + box.width + margin - x);
+  const height = Math.min(400, region.height - y, box.y + box.height + margin - y);
+  return { width, height, bgra: copyPixelRect(region.bgra, region.width, x, y, width, height) };
+}
 function lootCaptureRoi(calibration) {
   return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
@@ -3285,7 +3292,7 @@ function detectLootItems(region, sensitivity) {
   };
   const vertical = lines(columns, height * 0.4), horizontal = lines(rows, width * 0.4);
   const minimum = { conservative: 0.35, balanced: 0.22, sensitive: 0.12 }[sensitivity], result = [];
-  if (vertical.length >= 3 && horizontal.length >= 3) for (let row = 0; row < horizontal.length - 1; row++) for (let column = 0; column < vertical.length - 1; column++) {
+  if (vertical.length >= 2 && horizontal.length >= 2) for (let row = 0; row < horizontal.length - 1; row++) for (let column = 0; column < vertical.length - 1; column++) {
     const left = vertical[column] + 1, top = horizontal[row] + 1, right = vertical[column + 1], bottom = horizontal[row + 1];
     const w = right - left, h = bottom - top;
     if (w < 8 || h < 8 || w / h < 0.5 || w / h > 2) continue;
@@ -3498,6 +3505,7 @@ var LootDetector = class {
           this.status.candidates++;
           this.candidate(parts.items, {
             dedupKey,
+            box: match.box,
             signature: match.signature,
             recognition: { kind: "loot-candidate", text, target: "", scene, basis: "red-grid-ui", quality: "unconfirmed", itemName: null }
           });
@@ -4798,7 +4806,8 @@ async function start(message) {
       cropJpeg: evidence.cropJpeg,
       recognition: match.recognition,
       attribution: null,
-      lootSignature: match.signature
+      lootSignature: match.signature,
+      lootDetail: lootDetailPixels(evidence.region, match.box)
     });
   }, (language) => ocr.open(language), settings.detection);
   active = true;

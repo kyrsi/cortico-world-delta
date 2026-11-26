@@ -161,3 +161,38 @@ test('reordered JSON display keys retain compatibility but changed geometry does
   assert.equal(matchesCalibration(source, calibration), false);
   assert.equal(startupCheck(capture.frame, detection, DELTA_DEFAULTS.loot).detection.reason, 'geometry-changed');
 });
+
+test('global calibration hotkey auto-saves with no panel mounted and leaves preview readable', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'delta-auto-hotkey-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cfg = structuredClone(DELTA_DEFAULTS);
+  cfg.enabled = true;
+  const config = { worlds: { delta: cfg } };
+  const path = join(directory, 'config.json');
+  await writeFile(path, JSON.stringify(config));
+  let press;
+  const def = deltaDefinition({ binding: { version: 1,
+    snapshot: () => ({revision: 'hotkey', viewEnabled: true, viewPermitted: true, observationEnabled: true,
+      displayId: display.id, corePaused: false, outputAvailable: true}),
+    calibrationHotkey: { register(callback, status) { press = callback; status('registered'); return () => {}; } } },
+    calibrationOperation: async request => request.kind === 'calibration-source' ? { status: 'source', source } : {status: 'ready', capture} });
+  const world = new WorldAssembly({config, rootDir: directory, dataDir: directory}, [def], ['delta']).slot('delta').instance;
+  t.after(() => world.stop());
+  await world.start(host);
+  const call = (method, ...args) => world.webUi().invoke('observer', method, args);
+  await call('state');
+  assert.equal(typeof press, 'function');
+  press();
+  let state;
+  for (let i = 0; i < 100; i++) {
+    state = await call('state');
+    if (state.calibrationHotkey?.attempt?.result.status !== 'capturing') break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const result = state.calibrationHotkey?.attempt?.result;
+  assert.equal(result?.status, 'ready');
+  const saved = JSON.parse(await readFile(path, 'utf8')).worlds.delta;
+  assert.deepEqual(saved.detection.calibration.roi, result.combat.roi);
+  assert.equal(saved.detection.nickname, '');
+  assert.ok((await call('detectionPreviewImage', result.frame.frameId)).$binary.base64);
+});

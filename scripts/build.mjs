@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import './build-loot-review.mjs';
 
 const options = {
   absWorkingDir: fileURLToPath(new URL('../', import.meta.url)),

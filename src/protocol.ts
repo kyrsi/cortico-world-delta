@@ -97,6 +97,7 @@ export type DeltaCalibrationSuggestion = ({ status: 'ready'; frame: CuaFrame; ex
   sources: { combat: DeltaPreparationRegionSource; loot: DeltaPreparationRegionSource } } & DeltaCalibrationRegions)
   | { status: 'inventory-ready'; frame: CuaFrame; expiresAt: string; loot: DeltaCalibrationRegions['loot']; sources: { loot: 'detected' } }
   | { status: 'preparation-only'; frame: CuaFrame; expiresAt: string; anchors: DeltaPreparationAnchors }
+  | { status: 'save-failed'; frame: CuaFrame; expiresAt: string }
   | ({ status: DeltaCalibrationDiagnostic } & ({ frame: CuaFrame; expiresAt: string } | { frame?: never; expiresAt?: never }))
   | { status: 'capture-unavailable'; frame?: never; expiresAt?: never };
 export interface DeltaCalibrationApplyRequest extends Partial<DeltaCalibrationRegions> {

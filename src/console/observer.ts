@@ -130,20 +130,19 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   }, updateControls, refreshState);
   const quickCalibration = quickCalibrationView({
     ui, signal, language: ctx.language, panel: sheet.el, identity: identity.element, screenshots,
-    suggest: (previewSignal) => ctx.invoke('calibrationSuggest', [], previewSignal),
+    suggest: async (previewSignal) => {
+      generation++;
+      const result = await ctx.invoke('calibrationSuggest', [], previewSignal);
+      const value = await ctx.invoke('state', [], previewSignal);
+      if (!previewSignal.aborted) render(value);
+      return result;
+    },
     image: (frameId, previewSignal) => ctx.invokePreviewBinary(frameId, previewSignal),
     dismiss: async (attemptId) => { await invoke('calibrationDismiss', attemptId); },
     setAspectRatio: async (ratio) => {
       generation++;
       const value = await invoke('calibrationAspectRatioConfigure', ratio);
       if (!signal.aborted) render(value);
-    },
-    apply: async (frameId, applySignal) => {
-      generation++;
-      const value = await ctx.invoke('calibrationApply', [{ frameId }], applySignal);
-      if (applySignal.aborted) return;
-      clearCalibration();
-      render(value);
     },
     openManual: () => visitManual('regions'),
     onChange: updateControls,
@@ -742,11 +741,12 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     regionPurpose.disabled = locked || calibrationBusy || !calibrationFrame;
     for (const { input } of regionFields) input.disabled = locked || calibrationBusy || !calibrationFrame;
     const pausing = !!state?.actions.pause && !state.actions.start;
-    const mode = pausing ? 'pause' : 'start';
+    const incomplete = !!state && (setupIssues(state, picker.displayInfo()).length > 0 || (!setup.element.hidden && setup.pending()));
+    const mode = pausing ? 'pause' : incomplete ? 'setup' : 'start';
     if (play.dataset.mode !== mode) {
       play.dataset.mode = mode;
-      play.textContent = S[mode];
-      play.setAttribute('aria-label', S[mode]);
+      play.textContent = pausing ? S.pause : S.start;
+      play.setAttribute('aria-label', incomplete && !pausing ? `${S.start} · ${V.incomplete}` : pausing ? S.pause : S.start);
     }
     const mayConfigure = !!state && setupIssues(state).length > 0;
     if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
@@ -830,7 +830,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       const channel = value[key];
       const calibration = check[key];
       const missingFields = {
-        nickname: key === 'detection' && !value.detection.config.nickname.trim(),
+        nickname: false,
         language: !channel.config.language,
         regions: !channel.config.calibration,
       };

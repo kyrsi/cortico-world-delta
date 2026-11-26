@@ -22,7 +22,6 @@ export function setupIssues(state: DeltaState, display?: CuaDisplay): SetupField
   if (!combat.enabled && !loot.enabled) issues.push('channels');
   if ((combat.enabled && !combat.language) || (loot.enabled && !loot.language)
     || (combat.enabled && loot.enabled && combat.language !== loot.language)) issues.push('language');
-  if (combat.enabled && !combat.nickname.trim()) issues.push('nickname');
   const invalid = (key: 'detection' | 'loot') => {
     const channel = state[key], saved = channel.config.calibration;
     return !saved || state.startupCheck[key].status === 'invalid' || (!!displayId && saved.display.id !== displayId)

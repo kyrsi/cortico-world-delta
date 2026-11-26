@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Recovery delay",
   maxRestarts: "Automatic recovery attempts",
   detectionEnabled: "Recognize kills and knockdowns",
-  detectionNickname: "Game nickname",
+  detectionNickname: "Game nickname (optional)",
   detectionLanguage: "Game language",
   lootEnabled: "Recognize red-tier items",
   lootLanguage: "Item interface language",

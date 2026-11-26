@@ -3,18 +3,26 @@ import { createHash } from 'node:crypto';
 import jpeg from 'jpeg-js';
 import type { CapturedEvidence, CapturedRegion } from 'cortico-world-desktop-pet/capture';
 import { captureRectangle } from './roi.ts';
+import { copyPixelRect } from './image.ts';
 import { createOcr, ocrUnavailableOnPlatform, type DeltaOcrBox, type DeltaOcrLayout, type DeltaOcrPort } from './ocr.ts';
 import { matchesCalibration } from './detector.ts';
 import { lootCalibrationFitsBudget } from './budget.ts';
 import { DELTA_LOOT_SAMPLE_INTERVAL_MS, DELTA_LOOT_RETAIN_MS, DELTA_MAX_LOOT_CANDIDATES, DELTA_MAX_LOOT_REFERENCES,
   DELTA_OCR_TRANSIENT_FAILURE_LIMIT, deltaOcrBackoffMs } from './limits.ts';
 import { unionRect } from './rect.ts';
-import { copyPixelRect } from './image.ts';
 import { compact, stripWhitespace, upperNFKC } from './text.ts';
 import type { DeltaDetectionConfig, DeltaLootCalibration, DeltaLootConfig, DeltaLootScene, DeltaLootSensitivity, DeltaLootState, DeltaRecognition, DeltaRoi } from './protocol.ts';
 
 export interface LootItemCandidate { box: DeltaOcrBox; signature: Uint8Array }
-export interface LootMatch { dedupKey: string; signature: Uint8Array; recognition: Extract<DeltaRecognition, { kind: 'loot-candidate' }> }
+export interface LootMatch extends LootItemCandidate { dedupKey: string; recognition: Extract<DeltaRecognition, { kind: 'loot-candidate' }> }
+/** Keep the slot's top-left label at native resolution. Very large slots retain their title and upper artwork. */
+export function lootDetailPixels(region: CapturedRegion, box: DeltaOcrBox): Pick<CapturedRegion, 'width' | 'height' | 'bgra'> {
+  const margin = Math.max(2, Math.round(box.height * 0.08));
+  const x = Math.max(0, box.x - margin), y = Math.max(0, box.y - margin);
+  const width = Math.min(640, region.width - x, box.x + box.width + margin - x);
+  const height = Math.min(400, region.height - y, box.y + box.height + margin - y);
+  return { width, height, bgra: copyPixelRect(region.bgra, region.width, x, y, width, height) };
+}
 export function lootCaptureRoi(calibration: DeltaLootCalibration): DeltaRoi {
   return unionRect(calibration.itemsRoi, calibration.contextRoi);
 }
@@ -142,7 +150,7 @@ export function detectLootItems(region: CapturedRegion, sensitivity: DeltaLootSe
   };
   const vertical = lines(columns, height * 0.4), horizontal = lines(rows, width * 0.4);
   const minimum = { conservative: 0.35, balanced: 0.22, sensitive: 0.12 }[sensitivity], result: LootItemCandidate[] = [];
-  if (vertical.length >= 3 && horizontal.length >= 3) for (let row = 0; row < horizontal.length - 1; row++) for (let column = 0; column < vertical.length - 1; column++) {
+  if (vertical.length >= 2 && horizontal.length >= 2) for (let row = 0; row < horizontal.length - 1; row++) for (let column = 0; column < vertical.length - 1; column++) {
     const left = vertical[column]! + 1, top = horizontal[row]! + 1, right = vertical[column + 1]!, bottom = horizontal[row + 1]!;
     const w = right - left, h = bottom - top;
     if (w < 8 || h < 8 || w / h < 0.5 || w / h > 2) continue;
@@ -283,7 +291,7 @@ export class LootDetector {
           if (this.tracker.has(namespace, match.signature, Date.now())) continue;
           const dedupKey = this.tracker.identify(namespace, match.signature, Date.now());
           this.tracker.remember(namespace, match.signature, dedupKey, Date.now()); this.status.candidates++;
-          this.candidate(parts.items, { dedupKey, signature: match.signature,
+          this.candidate(parts.items, { dedupKey, box: match.box, signature: match.signature,
             recognition: { kind: 'loot-candidate', text, target: '', scene, basis: 'red-grid-ui', quality: 'unconfirmed', itemName: null } });
         }
       } catch (error) {

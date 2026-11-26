@@ -13,7 +13,7 @@ const text: DeltaText = {
   restartDelayMs: "Délai avant récupération",
   maxRestarts: "Tentatives de récupération automatique",
   detectionEnabled: "Reconnaître les éliminations et mises à terre",
-  detectionNickname: "Pseudo dans le jeu",
+  detectionNickname: "Pseudo (facultatif)",
   detectionLanguage: "Langue du jeu",
   lootEnabled: "Reconnaître les objets de qualité rouge",
   lootLanguage: "Langue de l’interface des objets",
