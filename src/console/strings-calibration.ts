@@ -2,6 +2,7 @@ import type { Language } from 'cortico/core/language.ts';
 
 const en = {
   start: 'One-click calibration', recapture: 'Capture again',
+  closePreview: 'Close preview', previewFailed: 'Calibration was saved, but the preview image could not load. Capture again to view it.',
   prepare: 'Open the deployment screen or show the full safe box. The button gives you 3 seconds to return to the game.',
   countdown: (seconds: number) => `Return to the game. Capturing in ${seconds} s.`,
   loading: 'Locating areas in the screenshot…',
@@ -27,6 +28,7 @@ const TEXT: Record<Language, typeof en> = {
   en,
   zh: {
     start: '一键校准', recapture: '重新截图',
+    closePreview: '关闭预览', previewFailed: '校准已保存，预览图片加载失败；可重新截图查看。',
     prepare: '打开出发准备页，或让安全箱标题和全部格子可见。点击按钮后有 3 秒切回游戏。',
     countdown: (seconds) => `请切回游戏，${seconds} 秒后截图。`,
     loading: '正在定位截图中的区域…', saving: '正在保存校准…', saved: '已保存识别区域。',
@@ -44,6 +46,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   'zh-Hant': {
     start: '一鍵校準', recapture: '重新擷取畫面',
+    closePreview: '關閉預覽', previewFailed: '校準已儲存，預覽圖片載入失敗；可重新擷取畫面查看。',
     prepare: '開啟出發準備頁，或讓保險箱標題及所有格子可見。點選按鈕後有 3 秒切回遊戲。',
     countdown: (seconds) => `請切回遊戲，${seconds} 秒後擷取畫面。`,
     loading: '正在定位截圖中的區域…', saving: '正在儲存校準…', saved: '已儲存辨識區域。',
@@ -61,6 +64,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   ja: {
     start: 'ワンクリック調整', recapture: '再取得',
+    closePreview: 'プレビューを閉じる', previewFailed: '調整内容は保存されましたが、プレビュー画像を読み込めませんでした。画像を再取得すると確認できます。',
     prepare: '出撃準備画面か、セーフボックスの見出しと全マスを表示してください。ボタンを押してから3秒以内にゲームに戻ってください。',
     countdown: (seconds) => `ゲームに戻ってください。${seconds}秒後に画面を取得します。`,
     loading: '画像内の範囲を検出中…', saving: '調整内容を保存しています…', saved: '認識範囲を保存しました。',
@@ -78,6 +82,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   ko: {
     start: '원클릭 보정', recapture: '다시 캡처',
+    closePreview: '미리보기 닫기', previewFailed: '보정은 저장되었지만 미리보기 이미지를 불러오지 못했습니다. 다시 캡처하면 볼 수 있습니다.',
     prepare: '출발 준비 화면이나 보안 상자의 제목과 모든 칸을 표시하세요. 버튼을 누르면 3초 안에 게임으로 돌아가세요.',
     countdown: (seconds) => `게임으로 돌아가세요. ${seconds}초 후에 화면을 캡처합니다.`,
     loading: '캡처에서 영역을 찾는 중…', saving: '보정 저장 중…', saved: '인식 영역을 저장했습니다.',
@@ -95,6 +100,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   fr: {
     start: 'Calibrer en un clic', recapture: 'Reprendre la capture',
+    closePreview: 'Fermer l’aperçu', previewFailed: 'Le calibrage a été enregistré, mais l’image d’aperçu n’a pas pu être chargée. Reprenez la capture pour la voir.',
     prepare: 'Affichez la préparation ou le coffre sécurisé entier. Le bouton vous laisse 3 secondes pour revenir au jeu.',
     countdown: (seconds) => `Revenez au jeu. Capture dans ${seconds} s.`,
     loading: 'Recherche des zones dans la capture…', saving: 'Enregistrement du calibrage…', saved: 'Zones enregistrées.',
@@ -112,6 +118,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   de: {
     start: 'Ein-Klick-Kalibrierung', recapture: 'Erneut aufnehmen',
+    closePreview: 'Vorschau schließen', previewFailed: 'Die Kalibrierung wurde gespeichert, aber das Vorschaubild konnte nicht geladen werden. Nehmen Sie es erneut auf, um es anzusehen.',
     prepare: 'Zeigen Sie die Einsatzvorbereitung oder den gesamten Sicherheitscontainer an. Nach einem Klick bleiben 3 Sekunden zur Rückkehr ins Spiel.',
     countdown: (seconds) => `Kehren Sie zum Spiel zurück. Aufnahme in ${seconds} s.`,
     loading: 'Bereiche im Bild werden gesucht…', saving: 'Kalibrierung wird gespeichert…', saved: 'Bereiche gespeichert.',
@@ -129,6 +136,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   'es-419': {
     start: 'Calibrar con un clic', recapture: 'Volver a capturar',
+    closePreview: 'Cerrar vista previa', previewFailed: 'La calibración se guardó, pero no se pudo cargar la imagen de vista previa. Vuelve a capturar para verla.',
     prepare: 'Muestra la preparación o la caja fuerte completa. El botón te da 3 segundos para volver al juego.',
     countdown: (seconds) => `Vuelve al juego. Captura en ${seconds} s.`,
     loading: 'Buscando áreas en la captura…', saving: 'Guardando la calibración…', saved: 'Áreas guardadas.',
@@ -146,6 +154,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   'pt-BR': {
     start: 'Calibrar com um clique', recapture: 'Capturar novamente',
+    closePreview: 'Fechar prévia', previewFailed: 'A calibração foi salva, mas a imagem de prévia não pôde ser carregada. Capture novamente para vê-la.',
     prepare: 'Mostre a preparação ou o cofre inteiro. O botão dá 3 segundos para voltar ao jogo.',
     countdown: (seconds) => `Volte ao jogo. Captura em ${seconds} s.`,
     loading: 'Localizando áreas na captura…', saving: 'Salvando a calibração…', saved: 'Áreas salvas.',
@@ -163,6 +172,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   it: {
     start: 'Calibra con un clic', recapture: 'Acquisisci di nuovo',
+    closePreview: 'Chiudi anteprima', previewFailed: 'La calibrazione è stata salvata, ma non è stato possibile caricare l’immagine di anteprima. Acquisisci di nuovo la schermata per vederla.',
     prepare: 'Mostra la preparazione o l’intera cassaforte. Il pulsante ti lascia 3 secondi per tornare al gioco.',
     countdown: (seconds) => `Torna al gioco. Cattura tra ${seconds} s.`,
     loading: 'Ricerca delle aree nella cattura…', saving: 'Salvataggio della calibrazione…', saved: 'Aree salvate.',
@@ -180,6 +190,7 @@ const TEXT: Record<Language, typeof en> = {
   },
   ru: {
     start: 'Калибровка в один клик', recapture: 'Сделать новый снимок',
+    closePreview: 'Закрыть предпросмотр', previewFailed: 'Калибровка сохранена, но изображение предпросмотра не загрузилось. Сделайте новый снимок, чтобы посмотреть его.',
     prepare: 'Откройте экран подготовки или покажите сейф целиком. После нажатия кнопки у вас есть 3 секунды, чтобы вернуться в игру.',
     countdown: (seconds) => `Вернитесь в игру. Снимок через ${seconds} с.`,
     loading: 'Поиск областей на снимке…', saving: 'Сохранение калибровки…', saved: 'Области сохранены.',

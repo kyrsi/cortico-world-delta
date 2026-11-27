@@ -2,6 +2,7 @@ import type { CuaFrame } from 'cortico-world-desktop-pet';
 import { calibrationFitsBudget } from './detector.ts';
 import { lootCalibrationFitsBudget } from './loot-detector.ts';
 import { DEFAULT_GAME_ASPECT_RATIO, sameDeltaDisplay, type DeltaCalibration, type DeltaCalibrationRegions, type DeltaGameAspectRatio, type DeltaLootCalibration, type DeltaPreparationAnchors, type DeltaPreparationRegionSource, type DeltaRoi } from './protocol.ts';
+import { PREPARATION_REFERENCE_REGIONS as PRESET } from './calibration-preset.ts';
 
 const WIDTH = 2560;
 const HEIGHT = 1440;
@@ -17,11 +18,6 @@ export const SOLO_PREPARATION_MODE_ROI = normalized(2285, 1075, 155, 43);
 export const CALIBRATION_SOURCE_PROBE = { x: 0, y: 0, width: 0.000001, height: 0.000001 };
 export const CALIBRATION_PREVIEW_MS = 60_000;
 export type CalibrationSource = Pick<CuaFrame, 'display' | 'topologyRevision'>;
-
-const PRESET: DeltaCalibrationRegions = {
-  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1000, 1010, 700, 80) },
-  loot: { itemsRoi: normalized(980, 1000, 460, 280), contextRoi: normalized(980, 945, 650, 55) },
-};
 
 export function supportsPreparation(source: CalibrationSource): boolean {
   return source.display.bounds.width === WIDTH && source.display.bounds.height === HEIGHT;

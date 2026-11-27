@@ -11,11 +11,14 @@
 .delta-settings .rowbar { gap: 6px 8px; }
 .delta-settings [data-observer-play] {
   display: inline-flex; align-items: center; justify-content: center; gap: .6em;
-  min-height: 38px; padding-inline: 16px; border-radius: 999px;
+  width: 64px; height: 64px; min-height: 64px; padding: 0; border-radius: 50%;
   font-weight: 650;
 }
+.delta-control-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.delta-play-control { display: flex; flex-direction: column; align-items: center; gap: 6px; justify-self: end; max-width: 150px; }
+.delta-play-caption { color: var(--delta-ink); font-size: 12px; line-height: 1.4; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
 .delta-settings [data-observer-play]::before {
-  content: ''; width: .8em; height: .86em; background: currentColor;
+  content: ''; width: 18px; height: 20px; background: currentColor;
   clip-path: polygon(10% 0, 100% 50%, 10% 100%);
 }
 .delta-settings [data-observer-play][data-mode='pause']::before {
@@ -103,6 +106,8 @@
 .delta-settings .delta-observation-actions {
   margin: 0; flex-wrap: wrap; padding: 10px var(--delta-section-pad); border-bottom: 1px solid var(--delta-border);
 }
+.delta-settings .delta-observation-actions .delta-refresh-action { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; margin-inline-start: auto; border: 1px solid var(--delta-border); border-radius: 50%; font-size: 24px; line-height: 1; }
+.delta-settings :is([data-observer-play], .delta-refresh-action):focus-visible { outline: 2px solid var(--accent, #00835c); outline-offset: 4px; }
 .delta-overview .delta-source-box {
   padding: 14px var(--delta-section-pad);
   border-bottom: 1px solid var(--delta-border);
@@ -115,6 +120,20 @@
 .delta-screen-permission select { min-width: 0; max-width: 100%; }
 .delta-screen-permission [role='status']:empty { display: none; }
 .delta-quick-calibration { min-width: 0; }
+.delta-calibration-guide { min-width: 0; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--delta-border); border-radius: 10px; background: var(--delta-surface); }
+.delta-calibration-guide > summary { cursor: pointer; color: var(--delta-ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.delta-calibration-examples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+.delta-calibration-example { min-width: 0; margin: 0; }
+.delta-calibration-example figcaption { margin-top: 10px; }
+.delta-calibration-example .delta-quick-legend { flex-direction: column; align-items: flex-start; }
+.delta-guide-screen { position: relative; aspect-ratio: 16 / 9; border: 1px solid var(--delta-border); border-radius: 6px; background: #25333a; overflow: hidden; }
+.delta-guide-squad { position: absolute; inset: 18% 28% 14%; display: flex; align-items: center; justify-content: space-around; gap: 12%; }
+.delta-guide-player { display: block; position: relative; width: 25%; height: 58%; border-radius: 45% 45% 15% 15%; background: #52666f; }
+.delta-guide-player::before { content: ''; position: absolute; width: 75%; aspect-ratio: 1; bottom: 100%; left: 12.5%; margin-bottom: 4px; border-radius: 50%; background: #71858c; }
+.delta-guide-player:nth-child(2) { transform: scale(1.2); }
+.delta-guide-anchor { position: absolute; display: grid; place-items: center; min-width: 20px; height: 20px; padding-inline: 8px; border: 1px solid #c9dbe3; color: #f5f8fa; background: #40565e; font-size: 12px; font-weight: 700; }
+.delta-guide-anchor[data-anchor='start'] { top: 6%; left: 5%; }
+.delta-guide-anchor[data-anchor='actions'] { right: 5%; bottom: 6%; width: 20%; }
 .delta-calibration-section {
   display: grid; grid-template-columns: clamp(95px, 16%, 146px) minmax(0, 1fr); align-items: start; gap: 8px;
   margin: 0 var(--delta-section-pad); padding: 16px 0;
@@ -181,6 +200,7 @@
   .delta-calibration-section { grid-template-columns: minmax(0, 1fr); }
   .delta-calibration-title { margin-top: 0; }
   .delta-overview .delta-game-aspect { margin-inline-start: 0; }
+  .delta-calibration-examples { grid-template-columns: minmax(0, 1fr); }
 }
 .delta-game-aspect { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; font-size: 13px; }
 .delta-calibration-shortcut { padding: 2px 6px; border: 1px solid var(--delta-border); border-radius: 4px; color: var(--delta-muted); font: inherit; font-size: 12px; }
@@ -190,6 +210,8 @@
 .delta-quick-status { margin: 8px 0 0; color: var(--delta-ink); font-size: 13px; font-weight: 600; }
 .delta-quick-status:empty { display: none; }
 .delta-quick-status.bad { color: var(--danger, #b45950); }
+.delta-quick-status[data-calibration-status='saved'] { color: var(--ok, #19815e); }
+.delta-quick-status[data-calibration-status='saved']::before { content: '✓ '; }
 .delta-settings .delta-quick-calibration-actions { margin: 8px 0 0; }
 .delta-quick-preview > .delta-quick-capture { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 6px; }
 .delta-quick-capture > * { min-width: 0; overflow-wrap: anywhere; }
@@ -197,10 +219,10 @@
 .delta-quick-region { position: absolute; box-sizing: border-box; border: 2px solid var(--delta-region-color); pointer-events: none; }
 .delta-quick-region[data-source='preset'], .delta-quick-region[data-source='estimated'] { border-style: dashed; }
 .delta-quick-region[data-source='saved'] { border-style: dotted; }
-.delta-quick-preview [data-region='feed'] { --delta-region-color: #b6eaf4; }
-.delta-quick-preview [data-region='personal'] { --delta-region-color: #f8cf7b; }
-.delta-quick-preview [data-region='items'] { --delta-region-color: #bbefd5; }
-.delta-quick-preview [data-region='context'] { --delta-region-color: #f2baed; }
+.delta-quick-calibration [data-region='feed'] { --delta-region-color: #b6eaf4; }
+.delta-quick-calibration [data-region='personal'] { --delta-region-color: #f8cf7b; }
+.delta-quick-calibration [data-region='items'] { --delta-region-color: #bbefd5; }
+.delta-quick-calibration [data-region='context'] { --delta-region-color: #f2baed; }
 .delta-quick-preview [data-region='start'] { --delta-region-color: #b3daff; }
 .delta-quick-preview [data-region='actions'] { --delta-region-color: #ffcba9; }
 .delta-quick-marker { display: inline-grid; min-width: 16px; height: 16px; place-items: center; background: var(--delta-region-color); color: #1f2730; font-size: 11px; font-weight: 700; }

@@ -3320,25 +3320,33 @@ function lootNamespace(region, calibration) {
   return JSON.stringify([region.display, region.topologyRevision, calibration]);
 }
 
+// src/calibration-preset.ts
+var normalized = (x, y, width, height) => ({
+  x: x / 2560,
+  y: y / 1440,
+  width: width / 2560,
+  height: height / 1440
+});
+var PREPARATION_REFERENCE_REGIONS = {
+  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
+  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
+};
+
 // src/calibration.ts
 var WIDTH = 2560;
 var HEIGHT = 1440;
-var normalized = (x, y, width, height) => ({
+var normalized2 = (x, y, width, height) => ({
   x: x / WIDTH,
   y: y / HEIGHT,
   width: width / WIDTH,
   height: height / HEIGHT
 });
 var PREPARATION_ROIS = {
-  start: normalized(165, 45, 180, 55),
-  actions: normalized(1940, 1255, 510, 65)
+  start: normalized2(165, 45, 180, 55),
+  actions: normalized2(1940, 1255, 510, 65)
 };
-var SOLO_PREPARATION_MODE_ROI = normalized(2285, 1075, 155, 43);
+var SOLO_PREPARATION_MODE_ROI = normalized2(2285, 1075, 155, 43);
 var CALIBRATION_PREVIEW_MS = 6e4;
-var PRESET = {
-  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
-  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
-};
 function supportsPreparation(source2) {
   return source2.display.bounds.width === WIDTH && source2.display.bounds.height === HEIGHT;
 }
@@ -3366,8 +3374,8 @@ function projectedRegions(anchors) {
     if (!(width > 0 && height > 0 && visibleWidth >= width * 0.95 && visibleHeight >= height * 0.95)) return null;
     return { x, y, width: visibleWidth, height: visibleHeight };
   }
-  const roi = project2(PRESET.combat.roi), personalFeedbackRoi = project2(PRESET.combat.personalFeedbackRoi);
-  const itemsRoi = project2(PRESET.loot.itemsRoi), contextRoi = project2(PRESET.loot.contextRoi);
+  const roi = project2(PREPARATION_REFERENCE_REGIONS.combat.roi), personalFeedbackRoi = project2(PREPARATION_REFERENCE_REGIONS.combat.personalFeedbackRoi);
+  const itemsRoi = project2(PREPARATION_REFERENCE_REGIONS.loot.itemsRoi), contextRoi = project2(PREPARATION_REFERENCE_REGIONS.loot.contextRoi);
   return roi && personalFeedbackRoi && itemsRoi && contextRoi ? { combat: { roi, personalFeedbackRoi }, loot: { itemsRoi, contextRoi } } : null;
 }
 function calibrationRegions(source2, aspectRatio, combat, loot, anchors) {
@@ -3376,7 +3384,7 @@ function calibrationRegions(source2, aspectRatio, combat, loot, anchors) {
     savedCombat = { roi: combat.roi, personalFeedbackRoi: combat.personalFeedbackRoi ?? null };
   const savedLoot = loot && sameCalibrationSource(source2, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot) ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
   const native = supportsPreparation(source2) && (!anchors || containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions));
-  const projection = native ? PRESET : anchors && projectedRegions(anchors);
+  const projection = native ? PREPARATION_REFERENCE_REGIONS : anchors && projectedRegions(anchors);
   const combatRegion = savedCombat ?? projection?.combat, lootRegion = savedLoot ?? projection?.loot;
   if (!combatRegion || !lootRegion || !calibrationFitsBudget({ ...source2, ...combatRegion }) || !lootCalibrationFitsBudget({ ...source2, ...lootRegion })) return null;
   const fallback = native ? "preset" : "estimated";

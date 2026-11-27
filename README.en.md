@@ -31,6 +31,8 @@ The Git version is 1.3.0 and has not been published to npm. Public version 1.2.0
 
 Calibration has been replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified. Synthetic tests cover safe-box outer boundaries, capacity headings and red candidates in every slot for 1×2, 2×2 and 2×3; complete real-game footage for each size still needs validation. [Configuration and coverage notes (Chinese)](documents/observation-setup.md)
 
+One-click calibration includes a schematic of the preparation screen and observation areas. Check the actual regions in the captured preview. The saved marker and preview remain visible; closing the preview retains the saved regions.
+
 Show debug log remains available only when historical ID logs exist. Saving a nickname clears retained historical ID frames. [Archived ID troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
 
 ## Reactions and game notes

@@ -49,7 +49,7 @@ const zh = {
   },
   attributionLabels: { assisted: "协助提示", spectating: "观战画面" },
   phases: {
-    "unbound": "尚未连接应用",
+    "unbound": "宿主未接入游戏观察",
     "stopped": "已停止",
     "starting": "正在启动",
     "running": "正在观察",
@@ -57,7 +57,7 @@ const zh = {
     "error": "观察出错"
   },
   reasons: {
-    "unbound": "观察扩展尚未连接应用。",
+    "unbound": "当前宿主未提供游戏观察接入，无法开始观察或校准。需要适配插件或使用已接入的宿主版本。",
     "stopped": "观察已停止。",
     "paused": "已手动暂停。",
     "view-disabled": "电脑查看已关闭。",
@@ -128,7 +128,7 @@ export const en: typeof zh = {
   },
   attributionLabels: { assisted: "Assist notification", spectating: "Spectator view" },
   phases: {
-    "unbound": "Not connected to the app",
+    "unbound": "Game observation integration unavailable",
     "stopped": "Stopped",
     "starting": "Starting",
     "running": "Observing",
@@ -136,7 +136,7 @@ export const en: typeof zh = {
     "error": "Observation error"
   },
   reasons: {
-    "unbound": "The observation extension is not connected to the app.",
+    "unbound": "This host has not connected game observation. Observation and calibration are unavailable. Adapt the extension or use a host with this integration.",
     "stopped": "Observation is stopped.",
     "paused": "Observation was paused manually.",
     "view-disabled": "Screen viewing is off.",

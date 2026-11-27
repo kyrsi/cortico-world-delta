@@ -12,6 +12,7 @@ import { dashboardText } from './strings-dashboard.ts';
 import { startupText } from './strings-startup.ts';
 import { observerText } from './strings.ts';
 import type { ScreenshotMenu } from './screenshot-menu.ts';
+import { calibrationGuide } from './calibration-guide.ts';
 
 type Suggestion = Extract<DeltaCalibrationSuggestion, { status: 'ready' | 'inventory-ready' | 'preparation-only' }>;
 type Failure = Exclude<DeltaCalibrationSuggestion['status'], Suggestion['status']> | 'source-changed' | 'expired' | 'failed';
@@ -79,6 +80,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   const status = ui.h('p', 'delta-quick-status');
   status.setAttribute('role', 'status');
   const instructions = calibrationHint(ui, start, I.team, 'delta-team-hint');
+  const guide = calibrationGuide(ui, language);
   const savedAreas = ui.h('footer', 'delta-saved-areas delta-note');
   savedAreas.setAttribute('role', 'status');
   const combatSummary = ui.h('span'), lootSummary = ui.h('span');
@@ -137,7 +139,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   preview.append(captureCaption, previewSurface, legend, preset);
   const attempt = ui.h('div', 'delta-quick-attempt');
   attempt.append(status, enable, preview, actions);
-  body.append(heading, instructions, ratioHint, attempt);
+  body.append(heading, instructions, ratioHint, guide, attempt);
   area.append(title, body);
   element.append(area, ctx.identity, savedAreas);
 
@@ -171,11 +173,13 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     start.disabled = !allowed || blocked || ratioBusy || running;
     ratio.disabled = !captureSource || blocked || ratioBusy || running;
     preview.hidden = !hasPreview;
-    cancel.hidden = !running;
+    cancel.textContent = stage === 'saved' ? T.closePreview : T.cancel;
+    cancel.hidden = !running && !hasPreview;
     cancel.disabled = stage === 'saving';
-    manual.hidden = !failed && stage !== 'preparation-only';
+    manual.hidden = !failed && stage !== 'preparation-only' && stage !== 'saved';
     manual.disabled = blocked;
     enable.hidden = stage !== 'saved';
+    guide.hidden = running || hasPreview;
     attempt.hidden = stage === 'idle';
     status.classList.toggle('bad', failed || stage === 'preparation-only');
     status.dataset.calibrationStatus = stage;
@@ -365,7 +369,10 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     void present(next.result, beginLoading());
   }
 
-  image.addEventListener('error', () => { if (previewFrameId && stage !== 'saving') finish('capture-unavailable'); }, { signal });
+  image.addEventListener('error', () => {
+    if (stage === 'saved') { status.textContent = T.previewFailed; return; }
+    if (previewFrameId && stage !== 'saving') finish('capture-unavailable');
+  }, { signal });
   doc.addEventListener('keydown', (event) => {
     if (start.disabled || shortcutsUnavailable || hotkeyStatus === 'registered' || hotkeyStatus === 'disabled' || event.defaultPrevented || event.repeat || event.isComposing
       || event.key !== 'F8' || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;

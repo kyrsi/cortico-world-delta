@@ -107,10 +107,18 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     } else void perform('start', { id, trigger });
   }, updateControls, () => { choosingObservationScreen = false; updateControls(); play.focus(); });
   sourceBox.append(sourceHeading, source, startupGeometry, picker.element);
-  const refresh = ui.button(S.refresh, { size: 'sm', onClick: () => void refreshState() });
+  const refresh = ui.button('↻', { size: 'sm', onClick: () => void refreshState() });
   refresh.setAttribute('aria-label', S.refresh);
+  refresh.title = S.refresh;
+  refresh.classList.add('delta-refresh-action');
   const play = ui.button(S.start, { variant: 'primary', onClick: playback });
   play.dataset.observerPlay = '';
+  const playLabel = ui.h('span', 'delta-control-label', S.start);
+  play.replaceChildren(playLabel);
+  const playCaption = ui.h('span', 'delta-play-caption', S.start);
+  playCaption.setAttribute('aria-hidden', 'true');
+  const playControl = ui.h('div', 'delta-play-control');
+  playControl.append(play, playCaption);
   const stop = ui.button(S.stop, { size: 'sm', onClick: () => void perform('stop') });
   stop.setAttribute('aria-label', S.stop);
   const configureSetup = ui.button(Q.title, { size: 'sm', onClick: () => openSetup() });
@@ -150,7 +158,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   const playbackBar = ui.h('header', 'delta-playback-bar');
   playbackBar.dataset.observerBar = '';
   playbackBar.setAttribute('aria-label', S.status);
-  playbackBar.append(statusBox, play);
+  playbackBar.append(statusBox, playControl);
   const setup = quickSetup(ctx, quickCalibration.element, {
     play: playback, close: () => void closeSetup(), jump: jumpToQuickField, manual: visitManual,
     save: async (request) => {
@@ -745,8 +753,9 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     const mode = pausing ? 'pause' : incomplete ? 'setup' : 'start';
     if (play.dataset.mode !== mode) {
       play.dataset.mode = mode;
-      play.textContent = pausing ? S.pause : S.start;
+      playLabel.textContent = playCaption.textContent = pausing ? S.pause : S.start;
       play.setAttribute('aria-label', incomplete && !pausing ? `${S.start} · ${V.incomplete}` : pausing ? S.pause : S.start);
+      play.title = play.getAttribute('aria-label')!;
     }
     const mayConfigure = !!state && setupIssues(state).length > 0;
     if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
