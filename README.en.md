@@ -33,6 +33,8 @@ Calibration has been replayed on 16:9 and 16:10 imagery. Native 4:3 remains unve
 
 One-click calibration includes a schematic of the preparation screen and observation areas. Check the actual regions in the captured preview. The saved marker and preview remain visible; closing the preview retains the saved regions.
 
+Start and pause observation from the pinned top button. Quick setup and Configuration no longer provide duplicate observation controls.
+
 Show debug log remains available only when historical ID logs exist. Saving a nickname clears retained historical ID frames. [Archived ID troubleshooting guide (Chinese)](documents/identity-debug-guide.md)
 
 ## Reactions and game notes

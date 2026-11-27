@@ -2960,7 +2960,6 @@ function deltaConfigGroups(language2 = "zh", hostControls = true, hotkeyAvailabl
   });
   return [
     group(owner, labels.observation, {
-      ...hostControls && { "observer.enabled": { type: "boolean", title: t.observer, "x-hot": true } },
       captureIntervalMs: duration(t.captureIntervalMs, 20, 1e4),
       gameAspectRatio: { type: "string", title: labels.gameAspectRatio, description: labels.gameAspectRatioDescription, enum: [...DELTA_GAME_ASPECT_RATIOS], "x-hot": true },
       ...hotkeyAvailable && { calibrationHotkeyEnabled: { type: "boolean", title: labels.hotkey, description: labels.hotkeyDescription, "x-hot": true } }

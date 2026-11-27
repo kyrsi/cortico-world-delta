@@ -12,6 +12,7 @@ export interface DeltaSpeechSettings extends Omit<DeltaSpeechConfig, 'eventKinds
   attribution: Record<DeltaSpeechConfig['relations'][number], boolean>;
 }
 export interface DeltaConfigSection extends WorldSection {
+  /** Persisted by the runtime panel's start/pause/stop controls. */
   observer: { enabled: boolean };
   standaloneDisplayId: string;
   captureIntervalMs: number;
@@ -58,7 +59,6 @@ export function deltaConfigGroups(language: Language = 'zh', hostControls = true
   });
   return [
     group(owner, labels.observation, {
-      ...(hostControls && { 'observer.enabled': { type: 'boolean' as const, title: t.observer, 'x-hot': true as const } }),
       captureIntervalMs: duration(t.captureIntervalMs, 20, 10_000),
       gameAspectRatio: { type: 'string', title: labels.gameAspectRatio, description: labels.gameAspectRatioDescription, enum: [...DELTA_GAME_ASPECT_RATIOS], 'x-hot': true },
       ...(hotkeyAvailable && { calibrationHotkeyEnabled: { type: 'boolean' as const, title: labels.hotkey, description: labels.hotkeyDescription, 'x-hot': true as const } }),

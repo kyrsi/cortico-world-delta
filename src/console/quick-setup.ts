@@ -35,7 +35,7 @@ export function setupIssues(state: DeltaState, display?: CuaDisplay): SetupField
 }
 
 export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, handlers: {
-  play(): void; close(): void; save(request: SaveRequest): Promise<void>; jump(field: SetupField): void; manual(section: Section): void;
+  close(): void; save(request: SaveRequest): Promise<void>; jump(field: SetupField): void; manual(section: Section): void;
 }) {
   const { ui, language } = ctx;
   const T = setupText(language), D = detectionText(language), V = dashboardText(language), C = startupText(language);
@@ -73,8 +73,6 @@ export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, h
   const err = ui.h('p', 'delta-note bad'); err.setAttribute('role', 'alert');
   const ready = ui.h('p', 'delta-setup-ready', T.ready); ready.setAttribute('role', 'status');
   const blocked = ui.h('p', 'delta-note'); blocked.setAttribute('role', 'status');
-  const play = ui.button(observerText(language).start, { variant: 'primary', onClick: handlers.play });
-  play.dataset.setupAction = 'play';
   const details = ui.h('details', 'delta-setup-details');
   details.append(ui.h('summary', null, T.details));
   for (const [section, label] of [['detection', V.combat], ['loot', V.loot], ['regions', V.calibration]] as const) {
@@ -82,9 +80,9 @@ export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, h
     button.dataset.setupManual = section;
     details.append(button);
   }
-  element.append(header, missingHeading, checklist, basics, err, calibration, details, ready, blocked, play);
+  element.append(header, missingHeading, checklist, basics, err, calibration, details, ready, blocked);
   const identity = calibration.querySelector<HTMLElement>('.delta-identity');
-  let dirty = false, locked = false, saving = false, canPlay = false;
+  let dirty = false, locked = false, saving = false;
   let lastState: DeltaState | null = null, needsGrant = false, selectedDisplay: CuaDisplay | undefined;
   function changed() { dirty = true; err.textContent = ''; refreshChecklist(); sync(); }
   function refreshChecklist() {
@@ -100,7 +98,6 @@ export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, h
     const reason = lastState.startBlockedReason;
     const blockedReason = lastState.captureMode === 'standalone' && reason === 'view-permission' ? null : reason;
     blocked.textContent = blockedReason ? observerText(language).reasons[blockedReason] : '';
-    canPlay = !issues.length && !dirty && !blockedReason && lastState.captureMode !== 'unsupported';
     ready.hidden = !!issues.length || dirty;
     missingHeading.hidden = checklist.hidden = issues.length === 0;
     calibration.hidden = !draft.detection.config.enabled && !draft.loot.config.enabled;
@@ -110,7 +107,6 @@ export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, h
   function sync() {
     combat.input.disabled = loot.input.disabled = gameLanguage.disabled = locked || saving;
     save.disabled = locked || saving || !dirty || !(combat.checked || loot.checked) || !gameLanguage.value;
-    play.disabled = locked || saving || dirty || !canPlay;
     close.disabled = locked || saving;
   }
   async function persist() {
@@ -133,7 +129,6 @@ export function quickSetup(ctx: ObserverViewContext, calibration: HTMLElement, h
       lastState = state; needsGrant = needsCalibrationGrant; selectedDisplay = display;
       if (!state) { sync(); return; }
       const detection = state.detection.config, items = state.loot.config;
-      play.hidden = !!state.actions.pause && !state.actions.start;
       if (!dirty) {
         combat.setChecked(detection.enabled); loot.setChecked(items.enabled);
         const shared = detection.enabled ? detection.language : items.enabled ? items.language : detection.language || items.language;

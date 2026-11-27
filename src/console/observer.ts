@@ -160,7 +160,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   playbackBar.setAttribute('aria-label', S.status);
   playbackBar.append(statusBox, playControl);
   const setup = quickSetup(ctx, quickCalibration.element, {
-    play: playback, close: () => void closeSetup(), jump: jumpToQuickField, manual: visitManual,
+    close: () => void closeSetup(), jump: jumpToQuickField, manual: visitManual,
     save: async (request) => {
       if (busy) return;
       const expected = ++generation;

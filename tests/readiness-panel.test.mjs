@@ -16,6 +16,7 @@ import { dashboardText } from '../src/console/strings-dashboard.ts';
 import { detectionText } from '../src/console/strings-detection.ts';
 import { lootText } from '../src/console/strings-loot.ts';
 import { startupText } from '../src/console/strings-startup.ts';
+import { observerText } from '../src/console/strings.ts';
 
 const { JSDOM } = createRequire(import.meta.resolve('cortico/web/client/ui/index.ts'))('jsdom');
 const bundle = await build({ entryPoints: [fileURLToPath(new URL('../src/console/observer.ts', import.meta.url))],
@@ -112,7 +113,7 @@ async function panel(t, { detection = {}, loot = {}, permitted = true, language 
     await settle();
   }
   const readCfg = async () => JSON.parse(await readFile(path, 'utf8')).worlds.delta;
-  return { document, el, channel, click, edit, requests, calibrationCalls, readCfg,
+  return { document, el, channel, click, edit, requests, calibrationCalls, readCfg, configGroups: rpc.config,
     refresh: async () => { await poll(); await settle(); },
     permit: async value => { permitted = value; await poll(); await settle(); } };
 }
@@ -131,6 +132,9 @@ for (const language of LANGUAGES) {
     const detection = detectionText(language), items = lootText(language), setup = dashboardText(language);
     assert.equal(p.el(wizard).hidden, true);
     assert.equal(p.el(overall).dataset.observerOverall, 'setup');
+    const startLabel = observerText(language).start;
+    assert.equal([...p.document.querySelectorAll('button')].filter(button => button.textContent === startLabel).length, 1);
+    assert.equal(p.document.querySelector(action('play')), null);
     for (const [key, label] of [['detection', detection.language], ['loot', items.language]]) {
       const c = p.channel(key);
       assert.deepEqual(c.missing(), [label]);
@@ -240,18 +244,44 @@ test('a prepared host starts directly and the same control pauses it', async t =
   assert.ok(p.el('[data-observer-bar]').contains(p.el(overall)) && p.el('[data-observer-bar]').contains(p.el(play)));
   await p.click('[data-open-setup]');
   assert.equal(p.el(wizard).hidden, false);
-  assert.equal(p.el(action('play')).disabled, false);
-  await p.click(action('close'));
+  assert.equal(p.document.querySelector(action('play')), null);
   await p.click(play);
   await waitUntil(() => p.el(play).dataset.mode === 'pause');
   assert.ok(p.document.querySelector('[data-capture-pause]').closest('[hidden]'));
   assert.equal(p.el(wizard).hidden, true);
+  assert.equal((await p.readCfg()).observer.enabled, true);
   await p.click(play);
   await waitUntil(() => p.el(play).dataset.mode === 'start');
   assert.equal(p.el(overall).dataset.observerOverall, 'paused');
+  assert.equal((await p.readCfg()).observer.enabled, false);
   assert.equal(p.requests.filter(op => op === 'start').length, 1);
   assert.equal(p.requests.filter(op => op === 'pause').length, 1);
 });
+
+test('unsaved quick-setup changes keep the top start control in setup until saved', async t => {
+  const p = await panel(t, { detection: { language: 'zh-CN', calibration: combatArea }, loot: { enabled: false } });
+  await p.click('[data-open-setup]');
+  await p.edit(field('language'), 'en-US');
+  await p.click(play);
+  assert.equal(p.el(wizard).hidden, false);
+  assert.equal(p.requests.includes('start'), false);
+  assert.equal((await p.readCfg()).observer.enabled, false);
+  assert.equal((await p.readCfg()).detection.language, 'zh-CN');
+});
+
+for (const standalone of [false, true]) {
+  test('configuration exposes recognition switches without an observation start switch in ' + (standalone ? 'standalone' : 'host') + ' mode', async t => {
+    const p = await panel(t, { standalone });
+    const fields = Object.assign({}, ...p.configGroups.map(group => group.schema.properties));
+    assert.equal(Object.hasOwn(fields, 'worlds.delta.observer.enabled'), false);
+    assert.equal(fields['worlds.delta.detection.enabled'].type, 'boolean');
+    assert.equal(fields['worlds.delta.loot.enabled'].type, 'boolean');
+    assert.equal(Object.hasOwn((await p.readCfg()).observer, 'enabled'), true);
+    await p.click(play);
+    assert.equal(p.el(wizard).hidden, false);
+    assert.equal(p.requests.includes('start') || p.requests.includes('startStandalone'), false);
+  });
+}
 
 test('revoking the host screen permission disables the one-shot calibration until access returns', async t => {
   const p = await panel(t, { detection: { language: 'zh-CN', nickname: 'FixturePlayer' }, loot: { enabled: false } });
