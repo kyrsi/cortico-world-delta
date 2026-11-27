@@ -2,7 +2,6 @@
 const zh = {
   title: "三角洲观察",
   panel: "运行状态",
-  observer: "启用观察",
   captureIntervalMs: "采集间隔",
   ttlMs: "事件有效期",
   dedupMs: "重复事件间隔",

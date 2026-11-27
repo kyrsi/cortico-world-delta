@@ -3,7 +3,6 @@ import type { DeltaText } from './zh.ts';
 const text: DeltaText = {
   title: "Delta 観察",
   panel: "稼働状況",
-  observer: "観察を有効にする",
   captureIntervalMs: "撮影間隔",
   ttlMs: "イベントの有効期間",
   dedupMs: "重複イベントの間隔",

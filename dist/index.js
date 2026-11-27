@@ -2183,7 +2183,6 @@ var require_jpeg_js = __commonJS({
 var zh = {
   title: "\u4E09\u89D2\u6D32\u89C2\u5BDF",
   panel: "\u8FD0\u884C\u72B6\u6001",
-  observer: "\u542F\u7528\u89C2\u5BDF",
   captureIntervalMs: "\u91C7\u96C6\u95F4\u9694",
   ttlMs: "\u4E8B\u4EF6\u6709\u6548\u671F",
   dedupMs: "\u91CD\u590D\u4E8B\u4EF6\u95F4\u9694",
@@ -2234,7 +2233,6 @@ var zh_default = zh;
 var text = {
   title: "Delta observation",
   panel: "Status",
-  observer: "Enable observation",
   captureIntervalMs: "Capture interval",
   ttlMs: "Event lifetime",
   dedupMs: "Duplicate event interval",
@@ -2285,7 +2283,6 @@ var en_default = text;
 var text2 = {
   title: "\u4E09\u89D2\u6D32\u89C0\u5BDF",
   panel: "\u57F7\u884C\u72C0\u614B",
-  observer: "\u555F\u7528\u89C0\u5BDF",
   captureIntervalMs: "\u64F7\u53D6\u9593\u9694",
   ttlMs: "\u4E8B\u4EF6\u6709\u6548\u671F",
   dedupMs: "\u91CD\u8907\u4E8B\u4EF6\u9593\u9694",
@@ -2336,7 +2333,6 @@ var zh_Hant_default = text2;
 var text3 = {
   title: "Delta \u89B3\u5BDF",
   panel: "\u7A3C\u50CD\u72B6\u6CC1",
-  observer: "\u89B3\u5BDF\u3092\u6709\u52B9\u306B\u3059\u308B",
   captureIntervalMs: "\u64AE\u5F71\u9593\u9694",
   ttlMs: "\u30A4\u30D9\u30F3\u30C8\u306E\u6709\u52B9\u671F\u9593",
   dedupMs: "\u91CD\u8907\u30A4\u30D9\u30F3\u30C8\u306E\u9593\u9694",
@@ -2387,7 +2383,6 @@ var ja_default = text3;
 var text4 = {
   title: "Delta \uAD00\uCC30",
   panel: "\uC2E4\uD589 \uC0C1\uD0DC",
-  observer: "\uAD00\uCC30 \uD65C\uC131\uD654",
   captureIntervalMs: "\uCEA1\uCC98 \uAC04\uACA9",
   ttlMs: "\uC774\uBCA4\uD2B8 \uC720\uD6A8 \uAE30\uAC04",
   dedupMs: "\uC911\uBCF5 \uC774\uBCA4\uD2B8 \uAC04\uACA9",
@@ -2438,7 +2433,6 @@ var ko_default = text4;
 var text5 = {
   title: "Observation Delta",
   panel: "\xC9tat",
-  observer: "Activer l\u2019observation",
   captureIntervalMs: "Intervalle de capture",
   ttlMs: "Dur\xE9e de validit\xE9 des \xE9v\xE9nements",
   dedupMs: "Intervalle des \xE9v\xE9nements identiques",
@@ -2489,7 +2483,6 @@ var fr_default = text5;
 var text6 = {
   title: "Delta-Beobachtung",
   panel: "Status",
-  observer: "Beobachtung aktivieren",
   captureIntervalMs: "Aufnahmeintervall",
   ttlMs: "G\xFCltigkeitsdauer von Ereignissen",
   dedupMs: "Abstand gleicher Ereignisse",
@@ -2540,7 +2533,6 @@ var de_default = text6;
 var text7 = {
   title: "Observaci\xF3n de Delta",
   panel: "Estado",
-  observer: "Activar observaci\xF3n",
   captureIntervalMs: "Intervalo de captura",
   ttlMs: "Vigencia de eventos",
   dedupMs: "Intervalo de eventos duplicados",
@@ -2591,7 +2583,6 @@ var es_419_default = text7;
 var text8 = {
   title: "Observa\xE7\xE3o de Delta",
   panel: "Estado",
-  observer: "Ativar observa\xE7\xE3o",
   captureIntervalMs: "Intervalo de captura",
   ttlMs: "Validade dos eventos",
   dedupMs: "Intervalo de eventos duplicados",
@@ -2642,7 +2633,6 @@ var pt_BR_default = text8;
 var text9 = {
   title: "Osservazione Delta",
   panel: "Stato",
-  observer: "Attiva osservazione",
   captureIntervalMs: "Intervallo di acquisizione",
   ttlMs: "Validit\xE0 degli eventi",
   dedupMs: "Intervallo degli eventi duplicati",
@@ -2693,7 +2683,6 @@ var it_default = text9;
 var text10 = {
   title: "\u041D\u0430\u0431\u043B\u044E\u0434\u0435\u043D\u0438\u0435 Delta",
   panel: "\u0421\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435",
-  observer: "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043D\u0430\u0431\u043B\u044E\u0434\u0435\u043D\u0438\u0435",
   captureIntervalMs: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B \u0441\u043D\u0438\u043C\u043A\u043E\u0432",
   ttlMs: "\u0421\u0440\u043E\u043A \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044F \u0441\u043E\u0431\u044B\u0442\u0438\u0439",
   dedupMs: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B \u043F\u043E\u0432\u0442\u043E\u0440\u044F\u044E\u0449\u0438\u0445\u0441\u044F \u0441\u043E\u0431\u044B\u0442\u0438\u0439",
@@ -2952,7 +2941,6 @@ function deltaConfigGroups(language = "zh") {
   });
   return [
     group(owner, labels.observation, {
-      "observer.enabled": { type: "boolean", title: t.observer, "x-hot": true },
       captureIntervalMs: duration(t.captureIntervalMs, 20, 1e4),
       gameAspectRatio: { type: "string", title: labels.gameAspectRatio, description: labels.gameAspectRatioDescription, enum: [...DELTA_GAME_ASPECT_RATIOS], "x-hot": true },
       calibrationHotkeyEnabled: { type: "boolean", title: labels.hotkey, description: labels.hotkeyDescription, "x-hot": true }
@@ -3253,25 +3241,33 @@ function lootNamespace(region, calibration) {
   return JSON.stringify([region.display, region.topologyRevision, calibration]);
 }
 
+// src/calibration-preset.ts
+var normalized = (x, y, width, height) => ({
+  x: x / 2560,
+  y: y / 1440,
+  width: width / 2560,
+  height: height / 1440
+});
+var PREPARATION_REFERENCE_REGIONS = {
+  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
+  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
+};
+
 // src/calibration.ts
 var WIDTH = 2560;
 var HEIGHT = 1440;
-var normalized = (x, y, width, height) => ({
+var normalized2 = (x, y, width, height) => ({
   x: x / WIDTH,
   y: y / HEIGHT,
   width: width / WIDTH,
   height: height / HEIGHT
 });
 var PREPARATION_ROIS = {
-  start: normalized(165, 45, 180, 55),
-  actions: normalized(1940, 1255, 510, 65)
+  start: normalized2(165, 45, 180, 55),
+  actions: normalized2(1940, 1255, 510, 65)
 };
-var SOLO_PREPARATION_MODE_ROI = normalized(2285, 1075, 155, 43);
+var SOLO_PREPARATION_MODE_ROI = normalized2(2285, 1075, 155, 43);
 var CALIBRATION_PREVIEW_MS = 6e4;
-var PRESET = {
-  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
-  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
-};
 function supportsPreparation(source) {
   return source.display.bounds.width === WIDTH && source.display.bounds.height === HEIGHT;
 }
@@ -3299,8 +3295,8 @@ function projectedRegions(anchors) {
     if (!(width > 0 && height > 0 && visibleWidth >= width * 0.95 && visibleHeight >= height * 0.95)) return null;
     return { x, y, width: visibleWidth, height: visibleHeight };
   }
-  const roi = project(PRESET.combat.roi), personalFeedbackRoi = project(PRESET.combat.personalFeedbackRoi);
-  const itemsRoi = project(PRESET.loot.itemsRoi), contextRoi = project(PRESET.loot.contextRoi);
+  const roi = project(PREPARATION_REFERENCE_REGIONS.combat.roi), personalFeedbackRoi = project(PREPARATION_REFERENCE_REGIONS.combat.personalFeedbackRoi);
+  const itemsRoi = project(PREPARATION_REFERENCE_REGIONS.loot.itemsRoi), contextRoi = project(PREPARATION_REFERENCE_REGIONS.loot.contextRoi);
   return roi && personalFeedbackRoi && itemsRoi && contextRoi ? { combat: { roi, personalFeedbackRoi }, loot: { itemsRoi, contextRoi } } : null;
 }
 function calibrationRegions(source, aspectRatio, combat, loot, anchors) {
@@ -3313,7 +3309,7 @@ function calibrationRegions(source, aspectRatio, combat, loot, anchors) {
   }
   const savedLoot = loot && sameCalibrationSource(source, loot) && (loot.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO) === aspectRatio && lootCalibrationFitsBudget(loot) ? { itemsRoi: loot.itemsRoi, contextRoi: loot.contextRoi } : null;
   const native = supportsPreparation(source) && (!anchors || containsCenter(PREPARATION_ROIS.start, anchors.start) && containsCenter(PREPARATION_ROIS.actions, anchors.actions));
-  const projection = native ? PRESET : anchors && projectedRegions(anchors);
+  const projection = native ? PREPARATION_REFERENCE_REGIONS : anchors && projectedRegions(anchors);
   const combatRegion = savedCombat ?? projection?.combat, lootRegion = savedLoot ?? projection?.loot;
   if (!combatRegion || !lootRegion || !calibrationFitsBudget({ ...source, ...combatRegion }) || !lootCalibrationFitsBudget({ ...source, ...lootRegion })) return null;
   const fallback = native ? "preset" : "estimated";
@@ -3808,6 +3804,7 @@ var DeltaWorld = class {
     this.reconcile();
   }
   async stop() {
+    this.options.desktop?.revoke();
     this.host = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
@@ -4224,6 +4221,7 @@ var DeltaWorld = class {
       loot.reason = "source-changed";
     }
     return structuredClone({
+      desktop: this.options.desktop?.status(),
       generation: this.generation,
       intent: this.intent,
       phase: this.phase,
@@ -4270,6 +4268,7 @@ var DeltaWorld = class {
       this.captures = 0;
     }
     this.options.persist({ observer: { enabled: intent === "running" } });
+    if (intent === "stopped") this.options.desktop?.revoke();
     this.reconcile();
     if (intent !== "running") await Promise.all(this.stopping);
     return this.state();
@@ -4484,6 +4483,20 @@ var DeltaWorld = class {
       config: deltaConfigGroups(language),
       invoke: async (panel, method, args) => {
         if (panel !== "observer") throw new Error(t.errors.unknownMethod);
+        if (method === "desktopDisplays") {
+          if (args.length || !this.options.desktop) throw new Error(t.errors.unavailable);
+          return this.options.desktop.displays();
+        }
+        if (method === "desktopAuthorize") {
+          if (args.length !== 1 || typeof args[0] !== "string" || !this.options.desktop) throw new Error(t.errors.invalidRequest);
+          await this.setIntent("stopped", t.errors.unavailable);
+          await this.options.desktop.authorize(args[0]);
+          return this.state();
+        }
+        if (method === "desktopRevoke") {
+          if (args.length || !this.options.desktop) throw new Error(t.errors.invalidRequest);
+          return this.setIntent("stopped", t.errors.unavailable);
+        }
         if (method === "calibrationAspectRatioConfigure") {
           if (args.length !== 1 || !isGameAspectRatio(args[0])) throw new Error(t.errors.invalidRequest);
           this.options.persist({ gameAspectRatio: args[0] });
@@ -4631,6 +4644,69 @@ var DeltaWorld = class {
   }
 };
 
+// src/official-host.ts
+import { createRequire } from "node:module";
+import { dirname as dirname3, join as join4 } from "node:path";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+import { existsSync as existsSync2 } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+var execute = promisify(execFile);
+function officialHost(repoRoot) {
+  if (process.platform !== "win32") return void 0;
+  const require2 = createRequire(join4(repoRoot, "package.json"));
+  let native, loader;
+  try {
+    native = join4(dirname3(require2.resolve("cortico-world-desktop-pet")), "cua", "engine", "win32.ts");
+    loader = pathToFileURL(require2.resolve("tsx")).href;
+    if (!existsSync2(native)) return void 0;
+  } catch {
+    return void 0;
+  }
+  const nativeUrl = pathToFileURL(native).href;
+  const module = new URL(import.meta.url.endsWith(".ts") ? "./official-capture.ts" : "./official-capture.js", import.meta.url);
+  const source = new URL(module);
+  source.searchParams.set("native", nativeUrl);
+  let displayId = "", permitted = false, revision = 0;
+  const binding = {
+    version: 1,
+    frameSourceModule: source.href,
+    snapshot: () => ({
+      revision: String(revision),
+      displayId,
+      viewEnabled: true,
+      observationEnabled: true,
+      viewPermitted: permitted,
+      corePaused: false,
+      outputAvailable: true
+    })
+  };
+  return {
+    binding,
+    status: () => ({ permitted, displayId }),
+    async displays() {
+      const { stdout } = await execute(
+        process.execPath,
+        ["--import", loader, fileURLToPath2(module), "--displays", nativeUrl],
+        { windowsHide: true, timeout: 1e4, maxBuffer: 1024 * 1024, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }
+      );
+      return JSON.parse(stdout);
+    },
+    async authorize(id) {
+      const attempt = ++revision;
+      permitted = false;
+      if (!(await this.displays()).some((d) => d.id === id)) throw new Error("Selected display is unavailable");
+      if (revision !== attempt) throw new Error("Screen authorization was cancelled");
+      displayId = id;
+      permitted = true;
+    },
+    revoke() {
+      permitted = false;
+      revision++;
+    }
+  };
+}
+
 // src/definition.ts
 function deltaDefinition(assembly = {}) {
   return {
@@ -4646,7 +4722,15 @@ function deltaDefinition(assembly = {}) {
     defaults: () => structuredClone(DELTA_DEFAULTS),
     configOptions: deltaConfigOptions,
     create: (ctx) => {
-      const world = new DeltaWorld({ ...assembly, cfg: ctx.cfg, dataDir: ctx.dataDir, persist: (patch) => ctx.persist(patch) });
+      const desktop = assembly.binding ? void 0 : officialHost(ctx.repoRoot);
+      const world = new DeltaWorld({
+        ...assembly,
+        binding: assembly.binding ?? desktop?.binding,
+        desktop,
+        cfg: ctx.cfg,
+        dataDir: ctx.dataDir,
+        persist: (patch) => ctx.persist(patch)
+      });
       assembly.onCreate?.(world);
       return world;
     }

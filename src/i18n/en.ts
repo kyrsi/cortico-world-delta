@@ -3,7 +3,6 @@ import type { DeltaText } from './zh.ts';
 const text: DeltaText = {
   title: "Delta observation",
   panel: "Status",
-  observer: "Enable observation",
   captureIntervalMs: "Capture interval",
   ttlMs: "Event lifetime",
   dedupMs: "Duplicate event interval",

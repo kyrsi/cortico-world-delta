@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "Notification d’assistance", spectating: "Vue spectateur" },
   phases: {
-    "unbound": "Non connecté à l’application",
+    "unbound": "Intégration d’observation du jeu indisponible",
     "stopped": "Arrêté",
     "starting": "Démarrage",
     "running": "Observation en cours",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "Erreur d’observation"
   },
   reasons: {
-    "unbound": "L’extension d’observation n’est pas connectée à l’application.",
+    "unbound": "Cet hôte ne fournit pas l’intégration d’observation du jeu. L’observation et le calibrage sont indisponibles. Adaptez l’extension ou utilisez un hôte compatible.",
     "stopped": "L’observation est arrêtée.",
     "paused": "L’observation a été suspendue manuellement.",
     "view-disabled": "La visualisation de l’écran est désactivée.",

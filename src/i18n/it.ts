@@ -3,7 +3,6 @@ import type { DeltaText } from './zh.ts';
 const text: DeltaText = {
   title: "Osservazione Delta",
   panel: "Stato",
-  observer: "Attiva osservazione",
   captureIntervalMs: "Intervallo di acquisizione",
   ttlMs: "Validità degli eventi",
   dedupMs: "Intervallo degli eventi duplicati",

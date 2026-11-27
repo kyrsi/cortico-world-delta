@@ -3,7 +3,6 @@ import type { DeltaText } from './zh.ts';
 const text: DeltaText = {
   title: "Delta 관찰",
   panel: "실행 상태",
-  observer: "관찰 활성화",
   captureIntervalMs: "캡처 간격",
   ttlMs: "이벤트 유효 기간",
   dedupMs: "중복 이벤트 간격",

@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "アシスト通知", spectating: "観戦画面" },
   phases: {
-    "unbound": "アプリに未接続",
+    "unbound": "ホストのゲーム観察連携が未接続",
     "stopped": "停止中",
     "starting": "起動中",
     "running": "観察中",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "観察エラー"
   },
   reasons: {
-    "unbound": "観察拡張がアプリに接続されていません。",
+    "unbound": "このホストにはゲーム観察の連携がなく、観察と調整を開始できません。拡張機能の対応、または連携済みのホストが必要です。",
     "stopped": "観察は停止しています。",
     "paused": "手動で一時停止しました。",
     "view-disabled": "画面の閲覧はオフです。",

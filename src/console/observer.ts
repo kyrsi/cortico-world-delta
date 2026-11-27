@@ -12,6 +12,7 @@ import { companionText } from './strings-companion.ts';
 import { dashboardText } from './strings-dashboard.ts';
 import { quickCalibrationView } from './quick-calibration.ts';
 import { screenshotMenu } from './screenshot-menu.ts';
+import { desktopSetup } from './desktop-setup.ts';
 import { deltaText } from '../i18n/index.ts';
 import { DELTA_MAX_ROI_AREA, DELTA_MAX_ROI_PIXELS, DELTA_MAX_LOOT_ITEMS_PIXELS, DELTA_MAX_LOOT_CONTEXT_PIXELS, DELTA_MAX_LOOT_ROI_AREA, DELTA_KNOWLEDGE_MAX_BYTES } from '../limits.ts';
 import './style.css';
@@ -48,6 +49,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   const P = companionText(ctx.language);
   const V = dashboardText(ctx.language);
   const errors = deltaText(ctx.language).errors;
+  const configureLabel = ctx.language === 'zh' ? '转到配置' : ctx.language === 'zh-Hant' ? '前往配置' : 'Go to settings';
   const makeRow: Row = row ?? ((label, control) => {
     const element = ui.h('div', 'delta-row');
     const body = ui.h('div', 'delta-control');
@@ -82,22 +84,47 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   status.setAttribute('role', 'status');
   const reason = ui.h('p', 'delta-note');
   const captures = ui.h('p', 'delta-note');
-  const statusBox = ui.h('div');
-  statusBox.append(status, reason);
+  const statusBox = ui.h('div', 'delta-player-status');
+  const calibrationHint = ui.h('p', 'delta-note', ctx.language.startsWith('zh')
+    ? '未校准的识别项目不会运行，请先校准对应区域。'
+    : 'Recognition requires calibration. Calibrate the regions for each recognition feature first.');
+  statusBox.append(status, reason, calibrationHint);
   const source = ui.h('p', 'delta-source', '—');
   const sourceBox = ui.h('div', 'delta-source-box');
   const startupGeometry = ui.h('p', 'delta-note');
   sourceBox.append(ui.h('h4', 'delta-source-label', S.source), source, startupGeometry);
-  const refresh = ui.button(S.refresh, { size: 'sm', onClick: () => void refreshState() });
+  const refresh = ui.button('↻', { size: 'sm', onClick: () => void refreshState() });
   refresh.setAttribute('aria-label', S.refresh);
+  refresh.title = S.refresh;
+  refresh.classList.add('delta-refresh-action');
   const actionButtons = (['start', 'pause', 'stop'] as const).map((action) => {
     const button = ui.button(S[action], { size: 'sm', onClick: () => void perform(action) });
     button.setAttribute('aria-label', S[action]);
-    return { action, button };
+    button.title = S[action];
+    button.dataset.observationAction = action;
+    const wrapper = ui.h('div', action === 'stop' ? 'delta-stop-control' : 'delta-play-control');
+    if (action !== 'stop') {
+      const icon = ui.h('span', `delta-${action === 'start' ? 'play' : 'pause'}-icon`);
+      icon.setAttribute('aria-hidden', 'true');
+      button.replaceChildren(icon);
+      button.classList.add('delta-playback-button');
+      wrapper.append(button, ui.h('span', 'delta-play-caption', S[action]));
+    } else wrapper.append(button);
+    return { action, button, wrapper };
   });
+  const configure = ui.button(configureLabel, { size: 'sm', onClick: () => {
+    if (busy || quickCalibration.locked() || signal.aborted) return;
+    if (state?.desktop && !state.desktop.permitted) desktop.focus();
+    else openSettings(detectionSettings);
+  } });
+  configure.classList.add('delta-configure-action');
   const controls = ui.rowbar();
   controls.classList.add('delta-observation-actions');
-  controls.append(...actionButtons.map(({ button }) => button), refresh);
+  const playback = ui.h('div', 'delta-playback');
+  playback.append(...actionButtons.filter(({ action }) => action !== 'stop').map(({ wrapper }) => wrapper));
+  controls.append(actionButtons.find(({ action }) => action === 'stop')!.wrapper, configure, refresh);
+  const player = ui.h('div', 'delta-player');
+  player.append(playback, statusBox, controls);
   const quickCalibration = quickCalibrationView({
     ui, signal, language: ctx.language, panel: sheet.el, screenshots,
     suggest: (previewSignal) => ctx.invoke('calibrationSuggest', [], previewSignal),
@@ -118,7 +145,8 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     openManual: () => openSettings(calibrationSettings),
     onChange: updateControls,
   });
-  overview.append(statusBox, controls, sourceBox, quickCalibration.element);
+  const desktop = desktopSetup(ctx, render);
+  overview.append(player, desktop.element, sourceBox, quickCalibration.element);
   const startupStatus = ui.h('p', 'delta-status', C.pending);
   startupStatus.setAttribute('role', 'status');
   const readiness = ui.h('section', 'delta-readiness');
@@ -436,6 +464,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   function openSettings({ element, summary }: ReturnType<typeof disclosure>): void {
     element.open = true;
     summary.focus();
+    element.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   function setText(element: HTMLElement, text: string): void {
@@ -636,11 +665,14 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     clearPersonal.disabled = locked || calibrationBusy || !active || !calibrationFrame || !personalFeedbackRoi || !validRegion(calibrationRoi) || regionTooLarge(false);
     regionPurpose.disabled = locked || calibrationBusy || !calibrationFrame;
     for (const { input } of regionFields) input.disabled = locked || calibrationBusy || !calibrationFrame;
-    for (const { action, button } of actionButtons) {
+    for (const { action, button, wrapper } of actionButtons) {
       button.disabled = locked || !active || !state?.actions[action];
       button.hidden = action === 'start' ? !!state?.actions.pause && !state.actions.start : !state?.actions[action];
+      if (action === 'pause' && state?.actions.start) button.hidden = true;
+      wrapper.hidden = button.hidden;
       button.classList.toggle('primary', action === 'start' || (action === 'pause' && !state?.actions.start));
     }
+    configure.disabled = locked || !active;
     simulate.disabled = locked || !active || !state?.actions.simulate;
     kind.disabled = simulate.disabled;
     refresh.disabled = busy || quickCalibration.pending() || polling;
@@ -654,12 +686,15 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     if (state && JSON.stringify([state.knowledge.source, state.knowledge.version, state.knowledge.name])
       !== JSON.stringify([value.knowledge.source, value.knowledge.version, value.knowledge.name])) clearKnowledgeContent();
     state = value;
+    desktop.render(value);
+    sourceBox.hidden = !!value.desktop;
+    calibrationHint.hidden = !!value.detection.config.calibration && !!value.loot.config.calibration;
     availability = 'active';
     setText(status, value.reason === 'paused' ? S.reasons.paused : S.phases[value.phase]);
     status.dataset.phase = value.phase;
     const reasonForStart = !value.actions.start && !value.actions.pause ? value.startBlockedReason : null;
     const observationIssue = reasonForStart ?? value.reason;
-    setText(reason, observationIssue && !['paused', 'stopped', 'unbound'].includes(observationIssue) ? S.reasons[observationIssue] : '');
+    setText(reason, observationIssue && !['paused', 'stopped'].includes(observationIssue) ? S.reasons[observationIssue] : '');
     setText(captures, S.captures(value.worker.captures));
     setText(source, value.source ? sourceLabel(value.source) : value.bound ? value.configuredDisplayId ? V.sourcePending : S.primary : '—');
     for (const { key, value: element } of knowledgeFields) {

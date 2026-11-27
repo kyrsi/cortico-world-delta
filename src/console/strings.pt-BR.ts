@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "Aviso de assistência", spectating: "Visão de espectador" },
   phases: {
-    "unbound": "Sem conexão com o aplicativo",
+    "unbound": "Integração de observação do jogo indisponível",
     "stopped": "Parada",
     "starting": "Iniciando",
     "running": "Observando",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "Erro de observação"
   },
   reasons: {
-    "unbound": "A extensão de observação não está conectada ao aplicativo.",
+    "unbound": "Este aplicativo hospedeiro não oferece a integração de observação do jogo. A observação e a calibração estão indisponíveis. Adapte a extensão ou use um hospedeiro com essa integração.",
     "stopped": "A observação está parada.",
     "paused": "A observação foi pausada manualmente.",
     "view-disabled": "A visualização da tela está desativada.",

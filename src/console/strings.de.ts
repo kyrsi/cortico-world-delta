@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "Assist-Meldung", spectating: "Zuschaueransicht" },
   phases: {
-    "unbound": "Nicht mit der App verbunden",
+    "unbound": "Spielbeobachtung nicht angebunden",
     "stopped": "Gestoppt",
     "starting": "Startet",
     "running": "Beobachtet",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "Beobachtungsfehler"
   },
   reasons: {
-    "unbound": "Die Beobachtungserweiterung ist nicht mit der App verbunden.",
+    "unbound": "Dieser Host stellt keine Anbindung für die Spielbeobachtung bereit. Beobachtung und Kalibrierung sind nicht verfügbar. Die Erweiterung muss angepasst oder ein Host mit dieser Anbindung verwendet werden.",
     "stopped": "Die Beobachtung ist gestoppt.",
     "paused": "Die Beobachtung wurde manuell pausiert.",
     "view-disabled": "Die Bildschirmansicht ist ausgeschaltet.",

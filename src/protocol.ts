@@ -216,6 +216,7 @@ export interface DeltaEvent {
 }
 
 export interface DeltaState {
+  desktop?: { permitted: boolean; displayId: string };
   generation: number;
   intent: DeltaIntent;
   phase: DeltaPhase;
@@ -242,6 +243,9 @@ export type DeltaScreenshotRevealRequest = { kind: 'preview'; frameId: string }
   | { kind: 'event'; eventId: string; frameId: string; part: 'full' | 'crop' };
 
 export interface DeltaPanelMethods {
+  desktopDisplays: { args: []; result: Array<{ id: string; primary: boolean; bounds: { x: number; y: number; width: number; height: number } }> };
+  desktopAuthorize: { args: [displayId: string]; result: DeltaState };
+  desktopRevoke: { args: []; result: DeltaState };
   speechConfigure: { args: [request: DeltaSpeechConfig]; result: DeltaState };
   knowledgeRead: { args: []; result: { content: string; state: DeltaKnowledgeState } };
   knowledgeImport: { args: [request: DeltaKnowledgeImportRequest]; result: DeltaState };

@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "協助提示", spectating: "觀戰畫面" },
   phases: {
-    "unbound": "尚未連接應用程式",
+    "unbound": "宿主未接入遊戲觀察",
     "stopped": "已停止",
     "starting": "正在啟動",
     "running": "正在觀察",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "觀察出錯"
   },
   reasons: {
-    "unbound": "觀察擴充功能尚未連接應用程式。",
+    "unbound": "目前宿主未提供遊戲觀察接入，無法開始觀察或校準。需要適配擴充功能或使用已接入的宿主版本。",
     "stopped": "觀察已停止。",
     "paused": "已手動暫停。",
     "view-disabled": "電腦查看已關閉。",

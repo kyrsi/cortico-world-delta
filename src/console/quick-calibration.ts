@@ -10,6 +10,7 @@ import { dashboardText } from './strings-dashboard.ts';
 import { startupText } from './strings-startup.ts';
 import { observerText } from './strings.ts';
 import type { ScreenshotMenu } from './screenshot-menu.ts';
+import { calibrationGuide } from './calibration-guide.ts';
 
 type Suggestion = Extract<DeltaCalibrationSuggestion, { status: 'ready' | 'inventory-ready' | 'preparation-only' }>;
 type Failure = Exclude<DeltaCalibrationSuggestion['status'], Suggestion['status']> | 'source-changed' | 'expired' | 'failed';
@@ -76,11 +77,9 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   manual.dataset.calibrationAction = 'manual';
   const cancel = ui.button(T.cancel, { size: 'sm', onClick: cancelAttempt });
   cancel.dataset.calibrationAction = 'cancel';
-  const save = ui.button(T.save, { size: 'sm', variant: 'primary', onClick: () => void apply() });
-  save.dataset.calibrationAction = 'apply';
   const actions = ui.rowbar();
   actions.classList.add('delta-quick-calibration-actions');
-  actions.append(cancel, save, manual);
+  actions.append(cancel, manual);
 
   const preview = ui.h('figure', 'delta-calibration delta-quick-preview');
   const captureCaption = ui.h('figcaption', 'delta-quick-capture delta-note');
@@ -96,7 +95,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   const image = ui.h('img', 'delta-calibration-image');
   image.alt = D.previewAlt;
   image.draggable = false;
-  ctx.screenshots.bind(image, () => previewFrameId && expiresAtMs > Date.now() && stage !== 'saving'
+  ctx.screenshots.bind(image, () => previewFrameId && expiresAtMs > Date.now() && stage !== 'saving' && stage !== 'saved'
     ? { kind: 'preview', frameId: previewFrameId } : null, previewSurface);
   const regions = [
     { key: 'feed', label: D.feed }, { key: 'personal', label: T.personal },
@@ -124,9 +123,11 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
   preview.append(captureCaption, previewSurface, legend, preset);
   const attempt = ui.h('div', 'delta-quick-attempt');
   attempt.append(status, enable, preview, actions);
-  element.append(heading, ratioHint, instructions, attempt);
+  const guide = calibrationGuide(ui, language);
+  element.append(heading, ratioHint, instructions, guide, attempt);
 
   let stage: Stage = 'idle';
+  let attemptRevision = 0;
   let allowed = false, blocked = false, ratioBusy = false, expiresAtMs = 0;
   let previewFrameId: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -154,15 +155,15 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     const running = stage === 'countdown' || stage === 'loading' || stage === 'saving';
     start.disabled = !allowed || blocked || ratioBusy || running;
     ratio.disabled = !captureSource || blocked || ratioBusy || running;
-    save.disabled = !canApply() || !allowed || blocked || ratioBusy;
-    save.hidden = !canApply() && stage !== 'saving';
     preview.hidden = !hasPreview;
+    cancel.textContent = stage === 'saved' ? T.closePreview : T.cancel;
     cancel.hidden = !locked() && !hotkeyAttemptId && !hasPreview;
     cancel.disabled = stage === 'saving';
-    manual.hidden = !failed && stage !== 'preparation-only';
+    manual.hidden = !failed && stage !== 'preparation-only' && stage !== 'saved';
     manual.disabled = blocked;
     enable.hidden = stage !== 'saved';
     instructions.hidden = locked();
+    guide.hidden = locked();
     attempt.hidden = stage === 'idle';
     status.classList.toggle('bad', failed);
     status.dataset.calibrationStatus = stage;
@@ -201,6 +202,7 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     ctx.onChange();
   }
   function clearAttempt(): void {
+    attemptRevision++;
     ctx.screenshots.dismissFor(image);
     clearTimeout(timer);
     controller?.abort();
@@ -214,10 +216,10 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }
-  function finish(next: 'idle' | 'saved' | Failure): void {
+  function finish(next: 'idle' | Failure): void {
     const returnFocus = actions.contains(doc.activeElement);
     clearAttempt();
-    show(next, next === 'saved' ? T.saved : next === 'idle' ? '' : failures[next]);
+    show(next, next === 'idle' ? '' : failures[next]);
     if (returnFocus) (start.disabled ? panel : start).focus();
   }
   function forgetHotkeyAttempt(dismiss: boolean): void {
@@ -286,7 +288,12 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
       image.src = previewUrl;
       image.dataset.frameId = frame.frameId;
       timer = setTimeout(expire, expiresAtMs - Date.now());
+      const revision = attemptRevision;
+      await image.decode();
+      if (requestSignal.aborted || revision !== attemptRevision) return;
+      if (expiresAtMs <= Date.now()) { expire(); return; }
       show(value.status, found ? value.status === 'preparation-only' ? T.preparationOnly : T.verify : failures[value.status]);
+      if (value.status === 'ready' || value.status === 'inventory-ready') await apply();
     } catch {
       if (!requestSignal.aborted) finish('capture-unavailable');
     }
@@ -328,19 +335,21 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     finish('expired');
   }
   async function apply(): Promise<void> {
-    if (save.disabled || !previewFrameId || signal.aborted) return;
+    if (!canApply() || !allowed || blocked || ratioBusy || !previewFrameId || signal.aborted) return;
     if (expiresAtMs <= Date.now()) { expire(); return; }
     const frameId = previewFrameId;
+    const revision = attemptRevision;
+    const applySignal = controller ? AbortSignal.any([signal, controller.signal]) : signal;
     clearTimeout(timer);
     show('saving', T.saving);
     try {
-      await ctx.apply(frameId, signal);
-      if (!signal.aborted) {
+      await ctx.apply(frameId, applySignal);
+      if (!applySignal.aborted && revision === attemptRevision) {
         forgetHotkeyAttempt(false);
-        finish('saved');
+        show('saved', T.saved);
       }
     } catch {
-      if (!signal.aborted) finish('failed');
+      if (!applySignal.aborted && revision === attemptRevision) finish('failed');
     }
   }
 
@@ -365,7 +374,10 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     void present(next.result, beginLoading());
   }
 
-  image.addEventListener('error', () => { if (previewFrameId && stage !== 'saving') finish('capture-unavailable'); }, { signal });
+  image.addEventListener('error', () => {
+    if (stage === 'saved') { status.textContent = T.previewFailed; return; }
+    if (previewFrameId && stage !== 'saving') finish('capture-unavailable');
+  }, { signal });
   doc.addEventListener('keydown', (event) => {
     if (start.disabled || hotkeyStatus === 'registered' || hotkeyStatus === 'disabled' || event.defaultPrevented || event.repeat || event.isComposing
       || event.key !== 'F8' || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return;
@@ -388,10 +400,10 @@ export function quickCalibrationView(ctx: QuickCalibrationContext) {
     const ratioChanged = captureSource && source && captureSource.gameAspectRatio !== source.gameAspectRatio;
     captureSource = source;
     if (!ratioBusy) ratio.value = source?.gameAspectRatio ?? DEFAULT_GAME_ASPECT_RATIO;
-    if (ratioChanged && (locked() || previewFrameId) && stage !== 'saving') {
+    if (ratioChanged && (locked() || previewFrameId)) {
       forgetHotkeyAttempt(false);
       finish('idle');
-    } else if ((!enabled || sourceChanged) && (locked() || previewFrameId) && stage !== 'saving') {
+    } else if ((!enabled || sourceChanged) && (locked() || previewFrameId)) {
       forgetHotkeyAttempt(false);
       finish(enabled ? 'source-changed' : 'capture-unavailable');
     } else {

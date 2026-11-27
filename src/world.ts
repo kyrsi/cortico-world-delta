@@ -6,6 +6,7 @@ import jpeg from 'jpeg-js';
 import type { Language } from 'cortico/core/language.ts';
 import type { BlobInput, EventEnvelope, OutputTap, RunPhase, World, WorldWebUiDecl, WorldHost } from 'cortico/core/types.ts';
 import type { DeepPartial } from 'cortico/world.ts';
+import type { officialHost } from './official-host.ts';
 import type { CuaFrame } from 'cortico-world-desktop-pet';
 import { CALIBRATION_PREVIEW_MS, calibrationRegions, sameCalibrationSource } from './calibration.ts';
 import { captureRectangle } from './roi.ts';
@@ -42,6 +43,7 @@ interface HotkeyLease {
 }
 const HOTKEY_REPEAT_MS = 750;
 export interface DeltaWorldOptions {
+  desktop?: ReturnType<typeof officialHost>;
   cfg: DeltaConfigSection; persist(patch: DeepPartial<DeltaConfigSection>): void;
   binding?: DeltaProductBinding; frameSourceModule?: string; modelLanguage?(): 'zh' | 'en';
   calibrationOperation?: typeof runCalibrationOperation;
@@ -128,6 +130,7 @@ export class DeltaWorld implements World {
     this.reconcile();
   }
   async stop(): Promise<void> {
+    this.options.desktop?.revoke();
     this.host = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
@@ -444,7 +447,7 @@ export class DeltaWorld implements World {
     if (config.enabled && config.calibration && this.frame && !matchesCalibration(this.frame, { ...config.calibration, roi: config.calibration.itemsRoi })) {
       loot.phase = 'uncalibrated'; loot.reason = 'source-changed';
     }
-    return structuredClone({ generation: this.generation, intent: this.intent, phase: this.phase, reason: this.reason, startBlockedReason: blocked, bound: !!snapshot,
+    return structuredClone({ desktop: this.options.desktop?.status(), generation: this.generation, intent: this.intent, phase: this.phase, reason: this.reason, startBlockedReason: blocked, bound: !!snapshot,
       source: this.frame?.display ?? null, configuredDisplayId: snapshot?.displayId ?? '',
       calibrationHotkey: this.calibrationHotkeyState(snapshot), gameAspectRatio: this.gameAspectRatio(),
       worker: { pid: this.worker?.pid ?? null, heartbeatAt: this.worker?.heartbeatAt ?? null, restarts: this.restarts, captures: this.captures },
@@ -461,6 +464,7 @@ export class DeltaWorld implements World {
     this.intent = intent; this.exhausted = false; this.retryAt = 0;
     if (intent === 'running') { this.restarts = 0; this.captures = 0; }
     this.options.persist({ observer: { enabled: intent === 'running' } });
+    if (intent === 'stopped') this.options.desktop?.revoke();
     this.reconcile();
     if (intent !== 'running') await Promise.all(this.stopping);
     return this.state();
@@ -656,6 +660,20 @@ export class DeltaWorld implements World {
     return { label: t.title, panels: [{ id: 'observer', title: t.panel }], config: deltaConfigGroups(language),
       invoke: async (panel, method, args) => {
         if (panel !== 'observer') throw new Error(t.errors.unknownMethod);
+        if (method === 'desktopDisplays') {
+          if (args.length || !this.options.desktop) throw new Error(t.errors.unavailable);
+          return this.options.desktop.displays();
+        }
+        if (method === 'desktopAuthorize') {
+          if (args.length !== 1 || typeof args[0] !== 'string' || !this.options.desktop) throw new Error(t.errors.invalidRequest);
+          await this.setIntent('stopped', t.errors.unavailable);
+          await this.options.desktop.authorize(args[0]);
+          return this.state();
+        }
+        if (method === 'desktopRevoke') {
+          if (args.length || !this.options.desktop) throw new Error(t.errors.invalidRequest);
+          return this.setIntent('stopped', t.errors.unavailable);
+        }
         if (method === 'calibrationAspectRatioConfigure') {
           if (args.length !== 1 || !isGameAspectRatio(args[0])) throw new Error(t.errors.invalidRequest);
           this.options.persist({ gameAspectRatio: args[0] });

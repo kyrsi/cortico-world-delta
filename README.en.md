@@ -5,15 +5,15 @@
 <h1 align="center">Game observer</h1>
 <p align="center">Bring Coo along on your next Delta Force Operations raid.</p>
 <p align="center"><a href="README.md" lang="zh-CN">简体中文</a> · English</p>
-<p align="center"><code>0.1.15</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
+<p align="center"><code>0.1.16</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
 
 Game observer watches the monitor you select, reads combat notifications with Windows OCR and looks for red-tier loot candidates in inventory and container grids. Coo can react to an event with its screenshot and your own game notes. Your pet can stay on one monitor while you play on another.
 
 ## Host compatibility
 
-**Observation requires a Coopanion host that implements the game observer binding.** Screen capture and calibration have been verified on the customized Windows build of **Coopanion 0.2.22 with Cortico 0.2.17**. This repository distributes the World plugin.
+Local version 0.1.16 adds a Windows adapter for stock Coopanion. Binding and display enumeration were verified on the official 0.2.25 installer build. Capture components resolve relative to the host package rather than a fixed install path; the portable distribution still needs its own runtime test. The adapter uses an internal host capture interface, so future host updates require compatibility checks.
 
-The stock 0.2.22 host loaded the previous 0.1.14 panel during testing, but the World remained unbound and capture was unavailable. Inspection of stock 0.2.23 found no equivalent binding in its World loader. That version still needs a runtime test. [Host loader](https://github.com/Pal-AI-Lab/Coopanion/blob/v0.2.23/core/companion.ts) · [World binding interface](src/protocol.ts)
+Choose a display and grant continuous viewing in the runtime panel before starting observation. Consent lasts for this session and is revoked by Stop or restart. This reads the selected display without enabling keyboard or mouse control. Core delivery pause does not replace Stop observation. Model reactions require image support. Use the panel calibration button; the global shortcut requires extra host integration. Existing customized host bindings remain supported.
 
 ## Install
 
@@ -27,10 +27,10 @@ In the compatible host, open **Settings → Extensions** and install from the lo
 
 ## First raid
 
-1. In the host’s computer-use settings, enable screen viewing and game observation. Select the gaming monitor and check its preview. Choose a policy that permits continuous viewing. Keyboard and mouse control can stay off. Install the Windows OCR language for the game text you want to read.
+1. On stock Coopanion, select your gaming display and grant access in the runtime panel. Customized hosts retain their own computer-use viewing policy and display selection. Install the Windows OCR language for the game text you want to read.
 2. Enter your full in-game nickname under combat recognition. Set the game aspect ratio under observation and calibration. The default is **16:10**.
-3. With the Chinese solo or squad preparation screen visible, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd>. Review the estimated regions in the panel and confirm within 60 seconds. To measure the loot region on the current frame, repeat with the entire safe-box title and grid visible. The panel button also gives you three seconds to switch back to the game.
-4. Enable the detectors you want and start observation. Recent events distinguish kills from knockdowns and record self, teammate or unknown attribution. Red-tier candidates still need visual confirmation. The calibration workflow was replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified.
+3. Open the Chinese solo or squad preparation screen, click One-click calibration, then switch back to the game within three seconds. The PC example in the panel shows the required screen and observation areas. Successful calibration saves automatically and keeps the captured screenshot, observation boxes and success indicator below the controls for review. If calibration fails, retry or adjust the regions manually. To measure the loot region on the current frame, repeat with the entire safe-box title and grid visible. You can also press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd> when your host supports the global shortcut.
+4. Enable the detectors you want in Configuration, then select Start observation in the runtime panel. Its start, pause and stop buttons control observation; Configuration contains recognition and capture settings. Recent events distinguish kills from knockdowns and record self, teammate or unknown attribution. Red-tier candidates still need visual confirmation. The calibration workflow was replayed on 16:9 and 16:10 imagery. Native 4:3 remains unverified.
 
 ## Reactions and game notes
 

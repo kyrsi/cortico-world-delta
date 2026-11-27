@@ -2664,7 +2664,7 @@ function parseDetection(lines, nickname, language) {
   const pattern = language === "en-US" ? /^(.+?)(?:\s+|\s*[:：]\s*)(KNOCKED\s+DOWN|KILLED)\s+(.+)$/iu : /^(.+?)(?:\s+|\s*[:：]\s*)(击\s*倒|击\s*杀)\s+(.+)$/u;
   const matches = /* @__PURE__ */ new Map();
   for (const text of lines) {
-    const normalized2 = text.normalize("NFKC").trim(), match = pattern.exec(normalized2);
+    const normalized3 = text.normalize("NFKC").trim(), match = pattern.exec(normalized3);
     if (!match || compact(match[1]) !== name) continue;
     const target = compact(match[3]);
     if (!target || /\b(?:KILLED|KNOCKED\s+DOWN)\b/iu.test(match[3]) || /击倒|击杀/u.test(match[3])) continue;
@@ -2687,10 +2687,10 @@ function personalFeedbackRows(layout) {
   const words = layout.lines.flatMap((line) => line.words);
   return words.filter((word) => compact(word.text).includes("\u51FB")).map((anchor) => {
     const row = words.filter((word) => sameBaseline(anchor.box, word.box)).sort((a, b) => a.box.x - b.box.x);
-    const text = row.map((word) => word.text).join(" "), normalized2 = compact(text), actions = [...normalized2.matchAll(/击倒|击败/gu)];
+    const text = row.map((word) => word.text).join(" "), normalized3 = compact(text), actions = [...normalized3.matchAll(/击倒|击败/gu)];
     const action = actions.length === 1 ? actions[0] : null;
-    const prefix = normalized2.slice(0, action?.index ?? normalized2.indexOf("\u51FB"));
-    return { row, anchor, text, normalized: normalized2, action, assisted: /协|助/u.test(prefix) };
+    const prefix = normalized3.slice(0, action?.index ?? normalized3.indexOf("\u51FB"));
+    return { row, anchor, text, normalized: normalized3, action, assisted: /协|助/u.test(prefix) };
   });
 }
 function assistedPersonalRows(layout) {
@@ -2715,9 +2715,9 @@ function attributePersonalFeedback(matches, layouts, view = "own") {
 function parsePersonalFeedback(layout, nickname) {
   if (layout.truncated || !nickname.trim()) return [];
   const matches = /* @__PURE__ */ new Map();
-  for (const { row, text, normalized: normalized2, action, assisted } of personalFeedbackRows(layout)) {
+  for (const { row, text, normalized: normalized3, action, assisted } of personalFeedbackRows(layout)) {
     if (!action) continue;
-    const kind = action[0] === "\u51FB\u5012" ? "knockdown" : "kill", target = normalized2.slice(action.index + action[0].length);
+    const kind = action[0] === "\u51FB\u5012" ? "knockdown" : "kill", target = normalized3.slice(action.index + action[0].length);
     let offset = 0;
     const boxes = [], targetBoxes = [];
     for (const word of row) {
@@ -3317,25 +3317,33 @@ var LootDetector = class {
 // src/protocol.ts
 var DEFAULT_GAME_ASPECT_RATIO = "16:10";
 
+// src/calibration-preset.ts
+var normalized = (x, y, width, height) => ({
+  x: x / 2560,
+  y: y / 1440,
+  width: width / 2560,
+  height: height / 1440
+});
+var PREPARATION_REFERENCE_REGIONS = {
+  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
+  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
+};
+
 // src/calibration.ts
 var WIDTH = 2560;
 var HEIGHT = 1440;
-var normalized = (x, y, width, height) => ({
+var normalized2 = (x, y, width, height) => ({
   x: x / WIDTH,
   y: y / HEIGHT,
   width: width / WIDTH,
   height: height / HEIGHT
 });
 var PREPARATION_ROIS = {
-  start: normalized(165, 45, 180, 55),
-  actions: normalized(1940, 1255, 510, 65)
+  start: normalized2(165, 45, 180, 55),
+  actions: normalized2(1940, 1255, 510, 65)
 };
-var SOLO_PREPARATION_MODE_ROI = normalized(2285, 1075, 155, 43);
+var SOLO_PREPARATION_MODE_ROI = normalized2(2285, 1075, 155, 43);
 var CALIBRATION_SOURCE_PROBE = { x: 0, y: 0, width: 1e-6, height: 1e-6 };
-var PRESET = {
-  combat: { roi: normalized(1850, 80, 710, 220), personalFeedbackRoi: normalized(1e3, 1010, 700, 80) },
-  loot: { itemsRoi: normalized(980, 1e3, 460, 280), contextRoi: normalized(980, 945, 650, 55) }
-};
 function supportsPreparation(source2) {
   return source2.display.bounds.width === WIDTH && source2.display.bounds.height === HEIGHT;
 }

@@ -39,7 +39,7 @@ export const S: typeof en = {
   },
   attributionLabels: { assisted: "지원 알림", spectating: "관전 화면" },
   phases: {
-    "unbound": "앱에 연결되지 않음",
+    "unbound": "호스트의 게임 관찰 연동 없음",
     "stopped": "중지됨",
     "starting": "시작 중",
     "running": "관찰 중",
@@ -47,7 +47,7 @@ export const S: typeof en = {
     "error": "관찰 오류"
   },
   reasons: {
-    "unbound": "관찰 확장이 앱에 연결되지 않았습니다.",
+    "unbound": "이 호스트에는 게임 관찰 연동이 없어 관찰과 보정을 시작할 수 없습니다. 확장을 수정하거나 연동된 호스트 버전을 사용해야 합니다.",
     "stopped": "관찰이 중지되었습니다.",
     "paused": "수동으로 일시 중지되었습니다.",
     "view-disabled": "화면 보기가 꺼져 있습니다.",

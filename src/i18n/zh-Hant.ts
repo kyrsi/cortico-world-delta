@@ -3,7 +3,6 @@ import type { DeltaText } from './zh.ts';
 const text: DeltaText = {
   title: "三角洲觀察",
   panel: "執行狀態",
-  observer: "啟用觀察",
   captureIntervalMs: "擷取間隔",
   ttlMs: "事件有效期",
   dedupMs: "重複事件間隔",
