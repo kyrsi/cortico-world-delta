@@ -93,8 +93,14 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
   status.dataset.observerOverall = 'loading';
   const reason = ui.h('p', 'delta-note');
   const captures = ui.h('p', 'delta-note');
+  const statusJump = ui.button(Q.fix, { size: 'sm', onClick: jumpToStatusFix });
+  statusJump.dataset.statusJump = '';
+  statusJump.replaceChildren(ui.h('span', 'delta-jump-arrow'));
+  statusJump.hidden = true;
+  const statusTitle = ui.h('div', 'delta-status-line');
+  statusTitle.append(status, statusJump);
   const statusBox = ui.h('div');
-  statusBox.append(status, reason);
+  statusBox.append(statusTitle, reason);
   const source = ui.h('p', 'delta-source', '—');
   const sourceBox = ui.h('div', 'delta-source-box');
   const startupGeometry = ui.h('p', 'delta-note');
@@ -555,6 +561,14 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
       picker.focus();
     } else if (state.actions.start) void perform('start');
   }
+  function jumpToStatusFix() {
+    if (!state || statusJump.disabled) return;
+    const [first] = setupIssues(state, picker.displayInfo());
+    if (first) { openSetup(first); return; }
+    choosingObservationScreen = true;
+    updateControls();
+    picker.focus();
+  }
 
   function setText(element: HTMLElement, text: string): void {
     if (element.textContent !== text) element.textContent = text;
@@ -761,7 +775,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
     play.disabled = (pausing ? busy : locked) || !active || state?.captureMode === 'unsupported'
       || (!pausing && !standalone && !state?.actions.start && !mayConfigure);
-    configureSetup.disabled = !active || locked;
+    configureSetup.disabled = statusJump.disabled = !active || locked;
     stop.hidden = !pendingGrant && !state?.actions.stop;
     stop.disabled = !pendingGrant && (busy || !active || !state?.actions.stop);
     simulate.disabled = locked || !active || !state?.actions.simulate;
@@ -797,6 +811,9 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     status.dataset.observerOverall = code;
     status.dataset.phase = value.phase;
     setText(reason, hint);
+    statusJump.hidden = !(code === 'setup' || (code === 'permission' && (incomplete || value.captureMode === 'standalone')));
+    const jumpLabel = incomplete ? Q.fix : captureLabels.choose;
+    if (statusJump.title !== jumpLabel) { statusJump.title = jumpLabel; statusJump.setAttribute('aria-label', jumpLabel); }
   }
   function render(value: DeltaState): void {
     if (state && !sameEvidenceState(state, value)) clearImages();
@@ -922,6 +939,7 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     status.dataset.observerOverall = 'unavailable';
     delete status.dataset.phase;
     setText(reason, detail);
+    statusJump.hidden = true;
     captures.textContent = '';
     source.textContent = '—';
     source.hidden = false;

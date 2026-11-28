@@ -25,9 +25,8 @@
   clip-path: none; background: linear-gradient(90deg,currentColor 0 35%,transparent 35% 65%,currentColor 65%);
 }
 .delta-settings [data-observer-play][data-mode='setup']::before {
-  content: '!'; clip-path: none; background: #f8d66d; color: #332700;
-  width: 1.2em; height: 1.2em; border-radius: 50%; line-height: 1.2; text-align: center;
-  box-shadow: 0 0 0 1px #8b6919; font-weight: 800;
+  width: 4px; height: 26px; border-radius: 2px; clip-path: none; background: #fff;
+  mask: linear-gradient(#000 0 0) top / 4px 18px no-repeat, radial-gradient(circle, #000 1.9px, transparent 2.1px) bottom / 4px 4px no-repeat;
 }
 .delta-quick-status.bad::before { content: '!'; display: inline-block; border: 1px solid currentColor; border-radius: 50%; width: 1.25em; margin-inline-end: .5em; text-align: center; }
 .delta-setup { margin: 0 var(--delta-section-pad) var(--delta-section-pad); padding-top: 14px; border-top: 1px solid var(--delta-border); }
@@ -103,11 +102,24 @@
   --delta-face-fill: color-mix(in srgb, var(--warn, #96743b) 16%, var(--delta-surface));
   --delta-face-ink: var(--warn, #96743b);
 }
+.delta-status-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.delta-settings [data-status-jump] { --delta-jump-ink: var(--warn, #96743b); }
+.delta-settings [data-status-jump]:not([hidden]) {
+  display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; min-height: 28px; padding: 0;
+  border: 1px solid color-mix(in srgb, var(--delta-jump-ink) 55%, var(--delta-border)); border-radius: 50%;
+  background: color-mix(in srgb, var(--delta-jump-ink) 12%, var(--delta-surface)); color: var(--delta-jump-ink);
+}
+.delta-settings [data-status-jump]:hover:enabled { border-color: var(--delta-jump-ink); background: var(--delta-jump-ink); color: var(--delta-surface); }
+.delta-jump-arrow { position: relative; width: 12px; height: 2px; border-radius: 1px; background: currentColor; }
+.delta-jump-arrow::after {
+  position: absolute; right: -1px; top: -3px; width: 6px; height: 6px;
+  border: solid currentColor; border-width: 2px 2px 0 0; transform: rotate(45deg); content: '';
+}
 .delta-settings .delta-observation-actions {
   margin: 0; flex-wrap: wrap; padding: 10px var(--delta-section-pad); border-bottom: 1px solid var(--delta-border);
 }
 .delta-settings .delta-observation-actions .delta-refresh-action { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; margin-inline-start: auto; border: 1px solid var(--delta-border); border-radius: 50%; font-size: 24px; line-height: 1; }
-.delta-settings :is([data-observer-play], .delta-refresh-action):focus-visible { outline: 2px solid var(--accent, #00835c); outline-offset: 4px; }
+.delta-settings :is([data-observer-play], .delta-refresh-action, [data-status-jump]):focus-visible { outline: 2px solid var(--accent, #00835c); outline-offset: 4px; }
 .delta-overview .delta-source-box {
   padding: 14px var(--delta-section-pad);
   border-bottom: 1px solid var(--delta-border);

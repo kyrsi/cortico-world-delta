@@ -121,6 +121,7 @@ async function panel(t, { detection = {}, loot = {}, permitted = true, language 
 const play = '[data-observer-play]';
 const wizard = '[data-quick-setup]';
 const overall = '[data-observer-overall]';
+const statusJump = '[data-status-jump]';
 const action = key => '[data-setup-action="' + key + '"]';
 const field = key => '[data-setup-field="' + key + '"]';
 const jump = key => '[data-setup-jump="' + key + '"]';
@@ -335,6 +336,33 @@ test('standalone play with complete settings confirms the selected display befor
   await waitUntil(() => p.el(play).dataset.mode === 'start');
   assert.equal(p.el(overall).dataset.observerOverall, 'paused');
 });
+test('the status arrow opens quick setup at the first missing field', async t => {
+  const p = await panel(t, { detection: { nickname: 'FixturePlayer', calibration: combatArea }, loot: { enabled: false } });
+  assert.equal(p.el(overall).dataset.observerOverall, 'setup');
+  await p.click(statusJump);
+  assert.equal(p.el(wizard).hidden, false);
+  assert.equal(p.document.activeElement, p.el(field('language')));
+  assert.equal(p.requests.includes('start'), false);
+});
+
+test('the standalone status arrow opens the display choice without starting', async t => {
+  const p = await panel(t, { standalone: true, detection: { enabled: false }, loot: { language: 'zh-CN', calibration: lootAreas } });
+  assert.equal(p.el(overall).dataset.observerOverall, 'permission');
+  assert.notEqual(p.el('[data-source-grant]').closest('[hidden]'), null);
+  await p.click(statusJump);
+  assert.equal(p.el(wizard).hidden, true);
+  assert.equal(p.el('[data-source-grant]').closest('[hidden]'), null);
+  assert.equal(p.requests.includes('startStandalone'), false);
+});
+
+test('the status arrow stays hidden when the host withholds viewing permission', async t => {
+  const p = await panel(t, { detection: { language: 'zh-CN', nickname: 'FixturePlayer', calibration: combatArea }, loot: { enabled: false } });
+  assert.notEqual(p.el(statusJump).closest('[hidden]'), null);
+  await p.permit(false);
+  assert.equal(p.el(overall).dataset.observerOverall, 'permission');
+  assert.notEqual(p.el(statusJump).closest('[hidden]'), null);
+});
+
 test('changing resolution on the same standalone display returns to area calibration before observing', async t => {
   const oldDisplay = { ...display, bounds: { ...display.bounds, width: 1280, height: 720 } };
   const p = await panel(t, { standalone: true, detection: { enabled: false },
