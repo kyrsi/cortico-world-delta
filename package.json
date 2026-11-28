@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-delta",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "让 Coo 可以按固定频率观察三角洲的击杀和保险箱。",
   "license": "AGPL-3.0-or-later",
   "repository": {

@@ -5,7 +5,7 @@
 <h1 align="center">Game observer</h1>
 <p align="center">Let Coo check kill notifications and the safe box in Delta Force at regular intervals.</p>
 <p align="center"><a href="README.md" lang="zh-CN">简体中文</a> · English</p>
-<p align="center"><code>1.3.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
+<p align="center"><code>1.4.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
 
 Game observer watches the monitor you select, reads combat notifications with Windows OCR and looks for red-tier loot candidates in inventory and container grids. Coo can react to an event with its screenshot and your own game notes. Your pet can stay on one monitor while you play on another.
 
@@ -16,7 +16,7 @@ Game observer watches the monitor you select, reads combat notifications with Wi
 
 ## Install
 
-The Git version is 1.3.0 and has not been published to npm. Public version 1.2.0 has been withdrawn; use the local installation steps below.
+The Git version is 1.4.0 and has not been published to npm. Public version 1.2.0 has been withdrawn; use the local installation steps below.
 
 1. Extract the local trial package and use advanced mode **Extensions → Install from local directory**. Select the folder containing `package.json`, `describe.json` and `dist`, and keep it in place. Run `npm run build` first when installing from source.
 2. Restart when prompted, activate **Game observer** under **My Worlds** and open the observer panel.

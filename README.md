@@ -5,7 +5,7 @@
 <h1 align="center">三角洲观察</h1>
 <p align="center">让 Coo 可以按固定频率观察三角洲的击杀和保险箱。</p>
 <p align="center">简体中文 · <a href="README.en.md" lang="en">English</a></p>
-<p align="center"><code>1.3.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
+<p align="center"><code>1.4.0</code> · <code>Windows</code> · <code>Cortico World API 6</code> · <a href="LICENSE">AGPL-3.0-or-later</a></p>
 <p align="center"><a href="#宿主兼容性">宿主兼容性</a>　·　<a href="#安装">安装</a>　·　<a href="#第一次观察">第一次观察</a>　·　<a href="#让-coo-怎么说">回应设置</a>　·　<a href="#开发">开发</a></p>
 
 **Game observer** 是一个可独立安装的 Coopanion World 扩展。它在后台查看你选定的显示器，用本机的 Windows OCR 读取战斗提示，在背包、搜刮或容器画面中寻找红色物品格。事件附带当时的画面，Coo 可以沿用自己的口吻接一句。游戏在屏幕 2 时，桌宠和气泡可以留在原来的位置。
@@ -17,7 +17,7 @@
 
 ## 安装
 
-当前 Git 版本为 1.3.0，尚未发布到 npm。公开版 1.2.0 已撤回；请按下面的本地安装方式试用。
+当前 Git 版本为 1.4.0，尚未发布到 npm。公开版 1.2.0 已撤回；请按下面的本地安装方式试用。
 
 1. 解压本地试用包，在高级模式「扩展 → 从本地安装」选择含 `package.json`、`describe.json` 和 `dist` 的目录，并长期保留该目录。源码目录须先运行 `npm run build`。
 2. 按提示重启，在「我的 World」激活「三角洲观察」，然后打开「运行状态」。
