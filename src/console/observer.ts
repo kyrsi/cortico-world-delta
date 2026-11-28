@@ -764,15 +764,17 @@ export function observerView(ctx: ObserverViewContext, row?: Row): HTMLElement {
     for (const { input } of regionFields) input.disabled = locked || calibrationBusy || !calibrationFrame;
     const pausing = !!state?.actions.pause && !state.actions.start;
     const incomplete = !!state && (setupIssues(state, picker.displayInfo()).length > 0 || (!setup.element.hidden && setup.pending()));
-    const mode = pausing ? 'pause' : incomplete ? 'setup' : 'start';
+    const mayConfigure = !!state && setupIssues(state).length > 0;
+    if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
+    const needsScreen = status.dataset.observerOverall === 'permission';
+    const mode = pausing ? 'pause' : incomplete || needsScreen ? 'setup' : 'start';
     if (play.dataset.mode !== mode) {
       play.dataset.mode = mode;
       playLabel.textContent = playCaption.textContent = pausing ? S.pause : S.start;
-      play.setAttribute('aria-label', incomplete && !pausing ? `${S.start} · ${V.incomplete}` : pausing ? S.pause : S.start);
+      const attention = incomplete ? V.incomplete : needsScreen ? V.needsScreen : '';
+      play.setAttribute('aria-label', pausing ? S.pause : attention ? `${S.start} · ${attention}` : S.start);
       play.title = play.getAttribute('aria-label')!;
     }
-    const mayConfigure = !!state && setupIssues(state).length > 0;
-    if (state) updatePlaybackStatus(state, setupIssues(state, picker.displayInfo()).length > 0);
     play.disabled = (pausing ? busy : locked) || !active || state?.captureMode === 'unsupported'
       || (!pausing && !standalone && !state?.actions.start && !mayConfigure);
     configureSetup.disabled = statusJump.disabled = !active || locked;

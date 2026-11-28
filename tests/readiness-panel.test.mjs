@@ -324,6 +324,7 @@ test('standalone play with complete settings confirms the selected display befor
   assert.equal(pauseNote.closest('[hidden]'), null);
   assert.equal(pauseNote.textContent, captureText('zh').pauseCapture);
   assert.equal(p.el(overall).dataset.observerOverall, 'permission');
+  assert.equal(p.el(play).dataset.mode, 'setup');
   assert.equal(p.requests.includes('startStandalone'), false);
   await p.edit('.delta-screen-permission select', display.id);
   await p.click('[data-source-grant]');
@@ -348,6 +349,7 @@ test('the status arrow opens quick setup at the first missing field', async t =>
 test('the standalone status arrow opens the display choice without starting', async t => {
   const p = await panel(t, { standalone: true, detection: { enabled: false }, loot: { language: 'zh-CN', calibration: lootAreas } });
   assert.equal(p.el(overall).dataset.observerOverall, 'permission');
+  assert.equal(p.el(play).dataset.mode, 'setup');
   assert.notEqual(p.el('[data-source-grant]').closest('[hidden]'), null);
   await p.click(statusJump);
   assert.equal(p.el(wizard).hidden, true);
@@ -360,6 +362,7 @@ test('the status arrow stays hidden when the host withholds viewing permission',
   assert.notEqual(p.el(statusJump).closest('[hidden]'), null);
   await p.permit(false);
   assert.equal(p.el(overall).dataset.observerOverall, 'permission');
+  assert.equal(p.el(play).dataset.mode, 'setup');
   assert.notEqual(p.el(statusJump).closest('[hidden]'), null);
 });
 
